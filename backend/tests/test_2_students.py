@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import config
 import db
-from conftest import consented_student, hdr, jpeg_bytes, make_staff, student_token
+from conftest import consented_student, hdr, jpeg_bytes, login, make_staff, student_token
 
 
 def complain(client, token, mess_id, category="Too oily", **extra):
@@ -132,7 +132,8 @@ def test_export_and_erase_my_data(client, college):
     assert erased and erased["student_name"] is None
     import os
     assert not os.path.exists(photo)
-    assert client.get("/me", headers=hdr(s)).json()["consent_needed"] is True
+    # Erasing also signs the student out everywhere.
+    assert client.get("/me", headers=hdr(s)).status_code == 401
 
 
 def test_retention_anonymizes_old_complaints(client, college):

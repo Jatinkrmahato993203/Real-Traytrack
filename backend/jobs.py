@@ -105,8 +105,14 @@ def weekly_digest():
 
 
 def retention():
+    """Privacy retention plus housekeeping of tables that only grow."""
     photos, ratings = db.apply_retention(config.RETENTION_DAYS)
-    return f"{photos} photos deleted, {ratings} ratings anonymized"
+    sessions = db.sessions.purge_old()
+    limits = db.security.purge_rate_limits()
+    _, trimmed = db.execute("DELETE FROM activity_log WHERE created_at < UTC_TIMESTAMP() - INTERVAL %s DAY",
+                            (config.ACTIVITY_RETENTION_DAYS,))
+    return (f"{photos} photos deleted, {ratings} ratings anonymized, {sessions} old sessions, "
+            f"{limits} rate-limit rows, {trimmed} activity rows trimmed")
 
 
 JOBS = [

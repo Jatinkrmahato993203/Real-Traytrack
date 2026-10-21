@@ -357,11 +357,70 @@ def m004_workflow_roles_compliance(cur):
     """)
 
 
+def m005_sessions_limits_tuning(cur):
+    """Server-side sessions (revocable, sliding expiry), shared rate-limit
+    counters, per-college tunable settings, indexed file names instead of
+    LIKE scans, full-text complaint search, moderation, and activity-log
+    housekeeping."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash CHAR(64) PRIMARY KEY,
+            kind VARCHAR(10) NOT NULL,
+            staff_id INT,
+            student_email VARCHAR(255),
+            student_name VARCHAR(255),
+            created_at DATETIME NOT NULL,
+            last_seen_at DATETIME NOT NULL,
+            expires_at DATETIME NOT NULL,
+            revoked_at DATETIME,
+            ip VARCHAR(64),
+            user_agent VARCHAR(255),
+            INDEX idx_sessions_staff (staff_id),
+            INDEX idx_sessions_student (student_email),
+            INDEX idx_sessions_expiry (expires_at)
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS rate_limits (
+            bucket VARCHAR(255) NOT NULL,
+            window_start DATETIME NOT NULL,
+            hits INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (bucket, window_start),
+            INDEX idx_rate_window (window_start)
+        )
+    """)
+    # JSON settings per college (thresholds etc.) — see fssai_rules.DEFAULT_SETTINGS.
+    _add_column(cur, "colleges", "settings", "TEXT")
+    # Shown on the privacy page (DPDP: who to contact about your data).
+    _add_column(cur, "colleges", "grievance_contact", "VARCHAR(255)")
+
+    # Exact, indexed file-name lookups for protected photos.
+    for table, path_col in (("complaints", "photo_path"), ("inspection_photos", "photo_path"),
+                            ("alert_evidence", "photo_path"), ("compliance_documents", "file_path")):
+        _add_column(cur, table, "file_name", "VARCHAR(64)")
+        cur.execute(f"UPDATE {table} SET file_name = SUBSTRING_INDEX(REPLACE({path_col}, '\\\\', '/'), '/', -1) "
+                    f"WHERE {path_col} IS NOT NULL AND file_name IS NULL")
+        _add_index(cur, table, f"idx_{table}_file_name", "file_name")
+
+    if not _index_exists(cur, "complaints", "ft_complaints_text"):
+        cur.execute("CREATE FULLTEXT INDEX ft_complaints_text ON complaints (description, dish)")
+
+    # Moderation: staff can hide abusive or identifying text.
+    _add_column(cur, "complaints", "hidden_at", "DATETIME")
+    _add_column(cur, "complaints", "hidden_reason", "VARCHAR(255)")
+    _add_column(cur, "complaints", "hidden_by_staff_id", "INT")
+
+    _add_index(cur, "activity_log", "idx_activity_created", "created_at")
+    # When a staff member last looked at their work queue (for unread counts).
+    _add_column(cur, "staff_users", "last_seen_activity_id", "INT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "students_privacy_notifications", m002_students_privacy_notifications),
     (3, "inspections", m003_inspections),
     (4, "workflow_roles_compliance", m004_workflow_roles_compliance),
+    (5, "sessions_limits_tuning", m005_sessions_limits_tuning),
 ]
 
 

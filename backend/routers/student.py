@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from google.auth.transport import requests as google_requests
@@ -22,12 +22,12 @@ import config
 import db
 import fssai_rules as rules
 import photos
-from deps import current_student
+from deps import current_student, rate_limit
 
 router = APIRouter(tags=["student"])
 
-RESOLVE_VOTES_NEEDED = 3      # distinct contributing students must agree it's fixed
-RESOLVE_MIN_AGE_DAYS = 2      # ...and the alert must have been open this long
+RESOLVE_MIN_AGE_DAYS = 2      # an alert must have been open this long before students can close it
+# How many reporting students must agree is a per-college setting (votes_needed).
 
 
 def _college_for(email):
@@ -51,16 +51,42 @@ class GoogleLoginRequest(BaseModel):
     credential: str
 
 
+def _sign_in(response, request, email, name):
+    token = auth.start_student_session(email, name, request)
+    auth.set_session_cookie(response, auth.STUDENT_COOKIE, token, auth.STUDENT_MAX)
+    return _me({"email": email, "name": name})
+
+
 @router.post("/auth/google")
-def google_login(payload: GoogleLoginRequest):
+def google_login(payload: GoogleLoginRequest, request: Request, response: Response):
+    rate_limit(request, "google_login", 20, 60)
     try:
         info = id_token.verify_oauth2_token(payload.credential, google_requests.Request(), config.GOOGLE_CLIENT_ID)
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid Google token")
     if not info.get("email_verified"):
         raise HTTPException(status_code=401, detail="Email not verified by Google")
-    student = {"email": info["email"].lower(), "name": info.get("name", "")}
-    return {**_me(student), "token": auth.create_student_token(student["email"], student["name"])}
+    return _sign_in(response, request, info["email"].lower(), info.get("name", ""))
+
+
+class TestLoginRequest(BaseModel):
+    email: str
+    name: str = ""
+
+
+if config.E2E_TEST_LOGIN:
+    # Browser end-to-end tests can't sign in with real Google accounts.
+    # Only registered when E2E_TEST_LOGIN=1 (refused on HTTPS deployments).
+    @router.post("/auth/test-login", include_in_schema=False)
+    def test_login(payload: TestLoginRequest, request: Request, response: Response):
+        return _sign_in(response, request, payload.email.strip().lower(), payload.name)
+
+
+@router.post("/auth/logout")
+def student_logout(request: Request, response: Response):
+    db.sessions.revoke(request.cookies.get(auth.STUDENT_COOKIE))
+    auth.clear_session_cookie(response, auth.STUDENT_COOKIE)
+    return {"ok": True}
 
 
 @router.get("/me")
@@ -88,6 +114,7 @@ def _require_consent(student):
 
 @router.post("/complaints")
 async def submit_complaint(
+    request: Request,
     mess_id: int = Form(...),
     category: str = Form(...),
     description: str = Form(""),
@@ -99,6 +126,10 @@ async def submit_complaint(
     student=Depends(current_student),
 ):
     _require_consent(student)
+    # Across all halls: per network and per student, on top of the
+    # per-hall daily cap below.
+    rate_limit(request, "complaint_ip", 30, 3600)
+    rate_limit(request, "complaint_student", 15, 86400, key=student["email"])
     if category not in rules.COMPLAINT_CATEGORIES:
         raise HTTPException(status_code=400, detail="Unknown category.")
     if meal and meal not in rules.MEALS:
@@ -146,18 +177,21 @@ async def submit_complaint(
 @router.get("/my-complaints")
 def my_complaints(student=Depends(current_student)):
     out = []
+    settings = {}
     for c in db.get_my_complaints(student["email"]):
-        alert = db.get_alert_for_complaint(c["id"], rules.PATTERN_WINDOW_DAYS)
+        s = settings.setdefault(c["college_id"], db.get_college_settings(c["college_id"]))
+        alert = db.get_alert_for_complaint(c["id"], s["window_days"])
         if alert:
             votes, voted = db.get_resolution_vote_state(alert["id"], student["email"])
             alert = {k: alert[k] for k in ("id", "level", "status", "reason", "resolved", "resolved_at",
                                            "created_at", "last_escalated_at")}
-            alert.update(resolve_votes=votes, resolve_votes_needed=RESOLVE_VOTES_NEEDED, you_voted=voted)
+            alert.update(resolve_votes=votes, resolve_votes_needed=s["votes_needed"], you_voted=voted)
         out.append({
             "id": c["id"], "mess_id": c["mess_id"], "mess_name": c["mess_name"], "category": c["category"],
             "description": c["description"], "meal": c["meal"], "dish": c["dish"], "anonymous": bool(c["anonymous"]),
             "status": c["status"], "staff_response": c["staff_response"], "responded_at": c["responded_at"],
             "created_at": c["created_at"], "has_photo": bool(c["photo_path"]), "alert": alert,
+            "hidden_reason": c["hidden_reason"] if c.get("hidden_at") else None,
         })
     return out
 
@@ -169,15 +203,17 @@ class VoteRequest(BaseModel):
 @router.post("/my-complaints/resolve")
 def vote_alert_fixed(payload: VoteRequest, student=Depends(current_student)):
     """A reporting student's vote that a pattern alert is fixed. The alert
-    closes once RESOLVE_VOTES_NEEDED different reporters agree — no single
+    closes once enough different reporters agree (votes_needed) — no single
     account (or anyone wanting to hide it) can close it alone."""
     alert = db.get_alert(payload.alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     if alert["resolved"]:
         raise HTTPException(status_code=400, detail="Already resolved")
+    s = db.get_college_settings(alert["college_id"])
+    needed = s["votes_needed"]
     if alert["source"] != "complaint_pattern" or not db.student_contributed_to_alert(
-            student["email"], alert, rules.PATTERN_WINDOW_DAYS):
+            student["email"], alert, s["window_days"]):
         raise HTTPException(status_code=403, detail="Only students who reported this issue can vote to resolve it.")
     if db.utcnow() - alert["last_escalated_at"] < timedelta(days=RESOLVE_MIN_AGE_DAYS):
         raise HTTPException(status_code=400, detail="Too early — the alert must have been open for 2+ days first")
@@ -186,15 +222,15 @@ def vote_alert_fixed(payload: VoteRequest, student=Depends(current_student)):
     if is_new:
         db.log_activity(
             "resolution_vote",
-            f"Student voted alert #{alert['id']} fixed ({votes}/{RESOLVE_VOTES_NEEDED}) — {alert['mess_name']}",
+            f"Student voted alert #{alert['id']} fixed ({votes}/{needed}) — {alert['mess_name']}",
             mess_id=alert["mess_id"], ref_id=alert["id"],
-            details={"votes": votes, "votes_needed": RESOLVE_VOTES_NEEDED, "masked_email": auth.mask_email(student["email"])},
+            details={"votes": votes, "votes_needed": needed, "masked_email": auth.mask_email(student["email"])},
         )
-    resolved = votes >= RESOLVE_VOTES_NEEDED
+    resolved = votes >= needed
     if resolved:
         db.set_status(alert["id"], "resolved", f"Confirmed fixed by {votes} reporting students", None,
                       expected_from=db.OPEN_STATUSES)
-    return {"ok": True, "resolved": resolved, "votes": votes, "votes_needed": RESOLVE_VOTES_NEEDED}
+    return {"ok": True, "resolved": resolved, "votes": votes, "votes_needed": needed}
 
 
 # ---------- Meal ratings ----------
@@ -211,9 +247,10 @@ def _today_local() -> date:
 
 
 @router.post("/ratings")
-def rate_meal(payload: RatingRequest, student=Depends(current_student)):
+def rate_meal(payload: RatingRequest, request: Request, student=Depends(current_student)):
     """One rating per student, hall, meal and day (re-rating overwrites)."""
     _require_consent(student)
+    rate_limit(request, "rating", 60, 3600, key=student["email"])
     if payload.meal not in rules.MEALS:
         raise HTTPException(status_code=400, detail="Unknown meal.")
     college = _college_for(student["email"])
@@ -242,8 +279,11 @@ def export_my_data(student=Depends(current_student)):
 
 
 @router.delete("/me/data")
-def erase_my_data(student=Depends(current_student)):
+def erase_my_data(response: Response, student=Depends(current_student)):
     """Removes the student's identity, text and photos from everything they
-    submitted. Counts by category/hall/time remain so history stays honest."""
+    submitted, and signs them out everywhere. Counts by category/hall/time
+    remain so history stays honest."""
     photos_deleted = db.erase_student(student["email"])
+    db.sessions.revoke_student(student["email"])
+    auth.clear_session_cookie(response, auth.STUDENT_COOKIE)
     return {"ok": True, "photos_deleted": photos_deleted}

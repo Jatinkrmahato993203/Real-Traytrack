@@ -4,12 +4,14 @@ per-item results/notes/photos, on-site verification, and the schedule.
 """
 
 import json
+import os
 import re
+from datetime import timedelta
 
 from .core import transaction, fetch_all, fetch_one, now_iso
 from . import activity
 
-INSPECTION_INTERVAL_DAYS = 30  # a hall is "overdue" if not inspected this often
+
 
 
 # ---------- Checklist ----------
@@ -141,8 +143,9 @@ def _parse_responses(raw):
 def add_inspection_photo(inspection_id, item_key, photo_path):
     with transaction() as cur:
         cur.execute(
-            "INSERT INTO inspection_photos (inspection_id, item_key, photo_path, created_at) VALUES (%s, %s, %s, %s)",
-            (inspection_id, item_key, photo_path, now_iso()),
+            "INSERT INTO inspection_photos (inspection_id, item_key, photo_path, file_name, created_at) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (inspection_id, item_key, photo_path, os.path.basename(photo_path), now_iso()),
         )
         return cur.lastrowid
 
@@ -186,8 +189,8 @@ def get_inspection_by_photo(filename):
     return fetch_one(
         "SELECT inspection_photos.inspection_id, mess_halls.college_id, inspections.mess_id FROM inspection_photos "
         "JOIN inspections ON inspection_photos.inspection_id = inspections.id "
-        "JOIN mess_halls ON inspections.mess_id = mess_halls.id WHERE inspection_photos.photo_path LIKE %s",
-        ("%" + filename,),
+        "JOIN mess_halls ON inspections.mess_id = mess_halls.id WHERE inspection_photos.file_name = %s",
+        (filename,),
     )
 
 
@@ -202,8 +205,10 @@ def latest_by_mess(college_id):
 
 
 def overview(college_id=None, mess_id=None):
-    """Per hall: last inspection, next due date (scheduled or interval-based)
-    and whether it's overdue — the inspector's to-do list."""
+    """Per hall: last inspection, scheduled date and the regular-interval due
+    date (the college's inspection_interval_days setting) — the inspector's
+    to-do list."""
+    from .colleges import get_college_settings
     where, params = ["1=1"], []
     if college_id:
         where.append("m.college_id = %s")
@@ -211,17 +216,21 @@ def overview(college_id=None, mess_id=None):
     if mess_id:
         where.append("m.id = %s")
         params.append(mess_id)
-    return fetch_all(
+    rows = fetch_all(
         "SELECT m.id AS mess_id, m.name AS mess_name, m.college_id, c.name AS college_name, "
         "  (SELECT MAX(created_at) FROM inspections WHERE mess_id = m.id) AS last_inspected_at, "
         "  (SELECT score FROM inspections WHERE mess_id = m.id ORDER BY id DESC LIMIT 1) AS last_score, "
-        "  (SELECT MIN(due_date) FROM inspection_schedule WHERE mess_id = m.id AND completed_inspection_id IS NULL) AS scheduled_due, "
-        # NULL for a hall that has never been inspected — it's due now.
-        f"  DATE((SELECT MAX(created_at) FROM inspections WHERE mess_id = m.id) + INTERVAL {INSPECTION_INTERVAL_DAYS} DAY) AS interval_due "
+        "  (SELECT MIN(due_date) FROM inspection_schedule WHERE mess_id = m.id AND completed_inspection_id IS NULL) AS scheduled_due "
         "FROM mess_halls m JOIN colleges c ON m.college_id = c.id WHERE " + " AND ".join(where) +
         " ORDER BY c.name, m.name",
         params,
     )
+    intervals = {}
+    for r in rows:
+        days = intervals.setdefault(r["college_id"], get_college_settings(r["college_id"])["inspection_interval_days"])
+        # None for a hall that has never been inspected — it's due now.
+        r["interval_due"] = (r["last_inspected_at"] + timedelta(days=days)).date() if r["last_inspected_at"] else None
+    return rows
 
 
 # ---------- Schedule ----------

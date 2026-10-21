@@ -23,10 +23,11 @@ def insert_complaint(college_id, mess_id, student_email, student_name, category,
     with transaction() as cur:
         cur.execute(
             "INSERT INTO complaints (college_id, mess_id, student_email, student_name, category, description, "
-            "photo_path, meal, dish, anonymous, status, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'received', %s)",
+            "photo_path, file_name, meal, dish, anonymous, status, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'received', %s)",
             (college_id, mess_id, student_email.strip().lower(), student_name, category, description,
-             photo_path, meal, dish, 1 if anonymous else 0, now_iso()),
+             photo_path, os.path.basename(photo_path) if photo_path else None, meal, dish,
+             1 if anonymous else 0, now_iso()),
         )
         complaint_id = cur.lastrowid
         cur.execute("SELECT name FROM mess_halls WHERE id = %s", (mess_id,))
@@ -87,9 +88,15 @@ def search_complaints(college_id=None, mess_id=None, since=None, until=None, cat
             where.append(clause)
             params.append(value)
     if q:
-        where.append("(complaints.description LIKE %s OR complaints.dish LIKE %s OR complaints.category LIKE %s)")
-        like = f"%{q}%"
-        params += [like, like, like]
+        words = [w for w in q.replace("*", " ").split() if len(w) >= 3]
+        if words:
+            # Full-text index: each word must appear (prefix match), so
+            # "cock" finds "cockroach" without scanning every row.
+            where.append("MATCH(complaints.description, complaints.dish) AGAINST (%s IN BOOLEAN MODE)")
+            params.append(" ".join(f"+{w}*" for w in words))
+        else:
+            where.append("complaints.dish = %s")
+            params.append(q)
     base = (
         "FROM complaints JOIN mess_halls ON complaints.mess_id = mess_halls.id "
         "JOIN colleges ON complaints.college_id = colleges.id WHERE " + " AND ".join(where)
@@ -125,6 +132,33 @@ def respond_to_complaint(complaint_id, status, response, staff):
         )
 
 
+def hide_complaint_text(complaint_id, reason, staff):
+    """Moderation: removes abusive or identifying text (and the photo, if
+    asked) from a complaint everywhere staff could see it, keeping the
+    report itself (category, hall, time) for pattern counting."""
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE complaints SET description = NULL, dish = NULL, hidden_at = %s, hidden_reason = %s, "
+            "hidden_by_staff_id = %s WHERE id = %s",
+            (now_iso(), reason, staff["id"], complaint_id),
+        )
+        # The live feed copied the text when the complaint arrived.
+        cur.execute(
+            "SELECT id, details FROM activity_log WHERE event_type = 'complaint_submitted' AND ref_id = %s",
+            (complaint_id,),
+        )
+        import json
+        for row in cur.fetchall():
+            details = json.loads(row["details"] or "{}")
+            details.update(description=None, dish=None, hidden=reason)
+            cur.execute("UPDATE activity_log SET details = %s WHERE id = %s", (json.dumps(details), row["id"]))
+        cur.execute("SELECT mess_id, college_id FROM complaints WHERE id = %s", (complaint_id,))
+        c = cur.fetchone()
+        activity.log(cur, "complaint_hidden", f"{staff['name']} hid the text of complaint #{complaint_id}",
+                     mess_id=c["mess_id"], college_id=c["college_id"], ref_id=complaint_id,
+                     details={"actor": staff["name"], "reason": reason})
+
+
 def get_complaints_since(college_id, since):
     return fetch_all(
         "SELECT id, mess_id, category, meal, created_at FROM complaints "
@@ -144,9 +178,7 @@ def get_my_complaints(email):
 
 def get_complaint_by_photo(filename):
     """`filename` must already be validated (hex + extension)."""
-    return fetch_one(
-        "SELECT id, college_id, mess_id FROM complaints WHERE photo_path LIKE %s", ("%" + filename,)
-    )
+    return fetch_one("SELECT id, college_id, mess_id FROM complaints WHERE file_name = %s", (filename,))
 
 
 # ---------- Pattern alerts ↔ complaints ----------
@@ -283,7 +315,7 @@ def _anonymize(cur, where_sql, params, clear_description):
     for email in emails:
         pseudonym = f"anon-{secrets.token_hex(8)}@deleted.invalid"
         cur.execute(
-            f"UPDATE complaints SET student_email = %s, student_name = NULL, photo_path = NULL, "
+            f"UPDATE complaints SET student_email = %s, student_name = NULL, photo_path = NULL, file_name = NULL, "
             f"{'description = NULL, dish = NULL, ' if clear_description else ''}anonymized_at = %s "
             f"WHERE student_email = %s AND {where_sql}",
             [pseudonym, now_iso(), email] + list(params),

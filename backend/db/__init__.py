@@ -30,4 +30,4 @@ from .complaints import *  # noqa: F401,F403
 from .alerts import *  # noqa: F401,F403
 from .inspections import *  # noqa: F401,F403
 from .staff import *  # noqa: F401,F403
-from . import notifications, compliance, security  # noqa: F401
+from . import notifications, compliance, security, sessions  # noqa: F401

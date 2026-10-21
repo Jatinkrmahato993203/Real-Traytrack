@@ -29,6 +29,7 @@ os.environ["SMTP_EMAIL"] = ""          # never send real email from tests
 os.environ["SMTP_APP_PASSWORD"] = ""
 os.environ["MESS_ADMIN_EMAIL"] = "admin@traytrack.test"
 os.environ["MESS_ADMIN_PASSWORD"] = "bootstrap-pass-123"
+os.environ["RATE_LIMIT_SCALE"] = "100"   # tests make many requests from one "IP"
 
 import config  # noqa: E402  (reads the env above)
 import pymysql  # noqa: E402
@@ -52,11 +53,29 @@ def client():
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _no_leftover_cookies(request):
+    """Each test starts signed out; tests authenticate explicitly with a
+    Bearer token, so a cookie from an earlier login can't leak in."""
+    if "client" in request.fixturenames:
+        request.getfixturevalue("client").cookies.clear()
+    yield
+
+
+def login(client, email, password="staff-pass-123"):
+    """Signs in through the real endpoint and returns the session token
+    from its HttpOnly cookie (then forgets the cookie)."""
+    r = client.post("/staff/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    token = r.cookies.get("tt_staff")
+    assert token and "token" not in r.json()
+    client.cookies.clear()
+    return token
+
+
 @pytest.fixture(scope="session")
 def admin_token(client):
-    r = client.post("/staff/login", json={"email": "admin@traytrack.test", "password": "bootstrap-pass-123"})
-    assert r.status_code == 200, r.text
-    return r.json()["token"]
+    return login(client, "admin@traytrack.test", "bootstrap-pass-123")
 
 
 def hdr(token):
@@ -82,8 +101,10 @@ def college(client, admin_token):
 
 
 def student_token(email, name="Test Student"):
+    """A real server-side student session (what /auth/google creates after
+    Google verifies the account)."""
     import auth
-    return auth.create_student_token(email, name)
+    return auth.start_student_session(email, name)
 
 
 def consented_student(client, email, name="Test Student"):
@@ -99,9 +120,7 @@ def make_staff(client, admin_token, email, role, college_id=None, mess_id=None, 
         "name": name or email.split("@")[0].title(), "email": email, "role": role,
         "college_id": college_id, "mess_id": mess_id, "password": "staff-pass-123"})
     assert r.status_code == 200, r.text
-    login = client.post("/staff/login", json={"email": email, "password": "staff-pass-123"})
-    assert login.status_code == 200, login.text
-    return login.json()["token"], r.json()
+    return login(client, email), r.json()
 
 
 def jpeg_bytes(with_gps=False):

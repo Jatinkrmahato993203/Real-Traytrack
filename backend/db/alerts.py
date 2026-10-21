@@ -6,6 +6,8 @@ The legacy `resolved` flag is kept in sync (1 only when status = resolved)
 so older queries and reports stay correct.
 """
 
+import os
+
 from .core import transaction, fetch_all, fetch_one, now_iso, LEVELS
 from . import activity
 
@@ -222,9 +224,10 @@ def assign(alert_id, owner_staff_id, due_date, actor):
 def add_evidence(alert_id, kind, note, actor, photo_path=None, inspection_id=None):
     with transaction() as cur:
         cur.execute(
-            "INSERT INTO alert_evidence (alert_id, kind, note, photo_path, inspection_id, staff_id, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (alert_id, kind, note, photo_path, inspection_id, actor["id"] if actor else None, now_iso()),
+            "INSERT INTO alert_evidence (alert_id, kind, note, photo_path, file_name, inspection_id, staff_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (alert_id, kind, note, photo_path, os.path.basename(photo_path) if photo_path else None, inspection_id,
+             actor["id"] if actor else None, now_iso()),
         )
         return cur.lastrowid
 
@@ -259,6 +262,6 @@ def get_evidence_by_photo(filename):
     return fetch_one(
         "SELECT alert_evidence.alert_id, mess_halls.college_id, alerts.mess_id FROM alert_evidence "
         "JOIN alerts ON alert_evidence.alert_id = alerts.id JOIN mess_halls ON alerts.mess_id = mess_halls.id "
-        "WHERE alert_evidence.photo_path LIKE %s",
-        ("%" + filename,),
+        "WHERE alert_evidence.file_name = %s",
+        (filename,),
     )

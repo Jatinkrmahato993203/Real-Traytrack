@@ -1,20 +1,24 @@
 """Migrations, seed data, public endpoints, staff sign-in and lockout."""
 
 import db
-from conftest import hdr
+from conftest import hdr, login
+
+
+LATEST = max(v for v, _, _ in __import__("db.migrations", fromlist=["MIGRATIONS"]).MIGRATIONS)
 
 
 def test_fresh_database_is_fully_migrated(client):
-    assert db.current_version() == 4
+    assert db.current_version() == LATEST
     tables = {r["t"] for r in db.fetch_all(
         "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = DATABASE()")}
     for t in ("complaints", "alerts", "staff_users", "activity_log", "meal_ratings", "notifications",
-              "checklist_items", "inspection_schedule", "alert_evidence", "compliance_documents", "job_runs"):
+              "checklist_items", "inspection_schedule", "alert_evidence", "compliance_documents", "job_runs",
+              "sessions", "rate_limits"):
         assert t in tables
 
 
 def test_migrations_are_idempotent(client):
-    assert db.run_migrations() == 4
+    assert db.run_migrations() == LATEST
 
 
 def test_seed_creates_default_checklist_and_kitchen_codes(client):
@@ -25,14 +29,15 @@ def test_seed_creates_default_checklist_and_kitchen_codes(client):
 
 def test_health(client):
     r = client.get("/health").json()
-    assert r["database"] is True and r["schema_version"] == 4 and r["email_configured"] is False
+    assert r["database"] is True and r["schema_version"] == LATEST and r["email_configured"] is False
 
 
 def test_public_colleges_hide_contact_emails(client, college, admin_token):
     client.patch(f"/staff/colleges/{college['id']}/contacts", headers=hdr(admin_token),
                  json={"principal_email": "principal@uni.test"})
     public = client.get("/colleges").json()
-    assert all(set(c) == {"id", "name", "email_domain"} for c in public)
+    # The grievance contact is meant for students (privacy page); alert contacts are not.
+    assert all(set(c) == {"id", "name", "email_domain", "grievance_contact"} for c in public)
     assert "principal@uni.test" not in str(public)
     # staff still see them
     staff_view = client.get("/staff/colleges", headers=hdr(admin_token)).json()

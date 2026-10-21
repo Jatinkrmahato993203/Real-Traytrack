@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import alert_engine
 import db
 import jobs
-from conftest import consented_student, hdr, jpeg_bytes, make_staff
+from conftest import consented_student, hdr, jpeg_bytes, login, make_staff
 
 
 def answers(checklist, fail=(), na=()):
@@ -38,7 +38,7 @@ def test_roles_and_scope(client, college, admin_token):
 
 
 def test_inspection_requires_every_answer(client, college, admin_token):
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     checklist = client.get(f"/staff/checklist?mess_id={college['big']}", headers=hdr(insp)).json()
     partial = answers(checklist)
     partial.pop(checklist[0]["item_key"])
@@ -47,7 +47,7 @@ def test_inspection_requires_every_answer(client, college, admin_token):
 
 
 def test_clean_inspection_raises_no_alert_and_na_is_ignored(client, college):
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     checklist = client.get(f"/staff/checklist?mess_id={college['big']}", headers=hdr(insp)).json()
     r = client.post("/staff/inspections", headers=hdr(insp), json={
         "mess_id": college["big"], "responses": answers(checklist, na=("license_displayed",))}).json()
@@ -55,7 +55,7 @@ def test_clean_inspection_raises_no_alert_and_na_is_ignored(client, college):
 
 
 def test_kitchen_code_verifies_visit_and_retries_are_idempotent(client, college, admin_token):
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     code = next(h for h in client.get(f"/staff/mess-halls?college_id={college['id']}", headers=hdr(insp)).json()
                 if h["id"] == college["small"])["kitchen_code"]
     checklist = client.get(f"/staff/checklist?mess_id={college['small']}", headers=hdr(insp)).json()
@@ -101,7 +101,7 @@ def test_checklist_is_editable_per_college(client, college, admin_token):
 
 
 def test_alert_workflow_needs_evidence_and_verification(client, college, admin_token):
-    head = client.post("/staff/login", json={"email": "head@uni.test", "password": "staff-pass-123"}).json()["token"]
+    head = login(client, "head@uni.test")
     principal, principal_row = make_staff(client, admin_token, "principal@uni.test", "principal", college["id"])
     alert = next(a for a in client.get("/staff/alerts?status=active", headers=hdr(head)).json()["items"]
                  if a["mess_id"] == college["big"])
@@ -184,11 +184,11 @@ def test_schedule_and_overview(client, college, admin_token):
     r = client.post("/staff/schedule", headers=hdr(admin_token), json={
         "mess_id": college["big"], "due_date": str(date.today() - timedelta(days=1)), "assigned_staff_id": insp_row["id"]})
     assert r.status_code == 200
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     overview = client.get("/staff/inspection-overview", headers=hdr(insp)).json()
     first = overview["halls"][0]
     assert first["overdue"] and first["assigned_to_me"] and first["mess_id"] == college["big"]
-    head = client.post("/staff/login", json={"email": "head@uni.test", "password": "staff-pass-123"}).json()["token"]
+    head = login(client, "head@uni.test")
     assert client.post("/staff/schedule", headers=hdr(head), json={
         "mess_id": college["big"], "due_date": str(date.today())}).status_code == 403
 
@@ -211,7 +211,7 @@ def test_csv_exports(client, college, admin_token):
     assert "Anonymous student" in r.text and "shy@" not in r.text
     for path in ("alerts", "inspections"):
         assert client.get(f"/staff/export/{path}.csv", headers=hdr(admin_token)).status_code == 200
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     assert client.get("/staff/export/alerts.csv", headers=hdr(insp)).status_code == 403
 
 
@@ -225,7 +225,7 @@ def test_complaint_search_and_paging(client, college, admin_token):
 
 
 def test_inspector_activity_feed_is_limited(client, admin_token):
-    insp = client.post("/staff/login", json={"email": "inspector@uni.test", "password": "staff-pass-123"}).json()["token"]
+    insp = login(client, "inspector@uni.test")
     types = {r["event_type"] for r in client.get("/staff/activity?limit=500", headers=hdr(insp)).json()}
     assert types and types <= {"complaint_submitted", "inspection_submitted", "inspection_scheduled"}
 

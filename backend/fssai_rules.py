@@ -63,35 +63,92 @@ def get_authority(level: str) -> str:
     return LEVEL_AUTHORITY.get(level, "Unknown")
 
 
-# ---------- Complaint pattern thresholds ----------
+# ---------- Complaint pattern thresholds (tunable per college) ----------
+# These are starting points, not research results. Each college can tune
+# them in Admin → Setup → Alert rules, using Admin → Insights to see how
+# many alerts each value would have produced on its own past data.
 
-PATTERN_WINDOW_DAYS = 30
-# Safety-critical categories don't wait for 20 people: a few independent
-# reports in a short window is already an outbreak signal.
-FAST_LANE_REPORTERS = 3
-FAST_LANE_HOURS = 48
-DEFAULT_CATEGORY_THRESHOLD = 20
-DEFAULT_MESS_THRESHOLD = 45
+DEFAULT_SETTINGS = {
+    "window_days": 30,            # how far back patterns look
+    "fast_lane_reporters": 3,     # safety-critical: this many students...
+    "fast_lane_hours": 48,        # ...within this many hours -> High
+    "category_pct": 5.0,          # same category: % of the hall's diners
+    "category_min": 5,
+    "category_max": 20,           # also used when capacity isn't set
+    "mess_pct": 10.0,             # anything at the hall: % of diners
+    "mess_min": 10,
+    "mess_max": 45,
+    "votes_needed": 3,            # reporting students who can close a pattern alert
+    "inspection_interval_days": 30,
+}
+
+SETTING_BOUNDS = {
+    "window_days": (7, 90), "fast_lane_reporters": (2, 20), "fast_lane_hours": (6, 168),
+    "category_pct": (0.5, 50), "category_min": (2, 100), "category_max": (2, 200),
+    "mess_pct": (0.5, 50), "mess_min": (2, 200), "mess_max": (2, 500),
+    "votes_needed": (1, 20), "inspection_interval_days": (7, 180),
+}
+
+
+def merge_settings(stored):
+    """Defaults overlaid with a college's own values."""
+    merged = dict(DEFAULT_SETTINGS)
+    for k, v in (stored or {}).items():
+        if k in DEFAULT_SETTINGS and v is not None:
+            merged[k] = type(DEFAULT_SETTINGS[k])(v)
+    return merged
+
+
+def validate_settings(changes):
+    """Returns (clean dict, errors list)."""
+    clean, errors = {}, []
+    for k, v in changes.items():
+        if k not in DEFAULT_SETTINGS:
+            errors.append(f"Unknown setting: {k}")
+            continue
+        if v is None:
+            clean[k] = None  # back to default
+            continue
+        try:
+            v = type(DEFAULT_SETTINGS[k])(v)
+        except (TypeError, ValueError):
+            errors.append(f"{k} must be a number")
+            continue
+        lo, hi = SETTING_BOUNDS[k]
+        if not lo <= v <= hi:
+            errors.append(f"{k} must be between {lo} and {hi}")
+            continue
+        clean[k] = v
+    return clean, errors
+
+
+# Kept for callers that don't have a college's settings at hand.
+PATTERN_WINDOW_DAYS = DEFAULT_SETTINGS["window_days"]
+FAST_LANE_REPORTERS = DEFAULT_SETTINGS["fast_lane_reporters"]
+FAST_LANE_HOURS = DEFAULT_SETTINGS["fast_lane_hours"]
 
 
 def is_fast_lane(category: str) -> bool:
     return COMPLAINT_CATEGORIES.get(category) == "High"
 
 
-def category_threshold(capacity):
-    """Distinct reporters needed in one category within the window. Scales
-    with how many people eat at the hall (5% of diners, between 5 and 20),
-    so a 150-seat hall isn't held to the same bar as a 2,000-seat one."""
+def _scaled(capacity, pct, lo, hi):
     if not capacity:
-        return DEFAULT_CATEGORY_THRESHOLD
-    return max(5, min(DEFAULT_CATEGORY_THRESHOLD, math.ceil(capacity * 0.05)))
+        return hi
+    return max(lo, min(hi, math.ceil(capacity * pct / 100)))
 
 
-def mess_threshold(capacity):
-    """Distinct reporters of anything at the hall (10% of diners, 10–45)."""
-    if not capacity:
-        return DEFAULT_MESS_THRESHOLD
-    return max(10, min(DEFAULT_MESS_THRESHOLD, math.ceil(capacity * 0.10)))
+def category_threshold(capacity, settings=None):
+    """Distinct reporters needed in one category within the window: a share
+    of the hall's diners, clamped — so a 150-seat hall isn't held to the
+    same bar as a 2,000-seat one."""
+    s = settings or DEFAULT_SETTINGS
+    return _scaled(capacity, s["category_pct"], s["category_min"], s["category_max"])
+
+
+def mess_threshold(capacity, settings=None):
+    s = settings or DEFAULT_SETTINGS
+    return _scaled(capacity, s["mess_pct"], s["mess_min"], s["mess_max"])
 
 
 # ---------- Inspections ----------

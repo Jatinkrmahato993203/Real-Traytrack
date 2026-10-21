@@ -41,6 +41,7 @@ def complaint_view(c):
         "reporter": "Anonymous student" if anonymous else auth.mask_email(c["student_email"]),
         "status": c.get("status"), "staff_response": c.get("staff_response"), "responded_at": c.get("responded_at"),
         "created_at": c["created_at"], "photo_url": db.complaint_photo_url(c.get("photo_path")),
+        "hidden_reason": c.get("hidden_reason") if c.get("hidden_at") else None,
     }
 
 
@@ -82,6 +83,25 @@ def respond(complaint_id: int, payload: RespondRequest, staff=Depends(current_st
         raise HTTPException(status_code=400, detail="Tell the student what was done (or why it was dismissed).")
     db.respond_to_complaint(complaint_id, payload.status, response[:2000] or None, staff)
     notify.complaint_update(c, payload.status, response)
+    return {"ok": True}
+
+
+class HideRequest(BaseModel):
+    reason: str
+
+
+@router.post("/complaints/{complaint_id}/hide")
+def hide_complaint(complaint_id: int, payload: HideRequest, staff=Depends(current_staff)):
+    """For abusive text or text that names/identifies someone. Admins and
+    principals only — the person handling the complaint can't hide it."""
+    require(staff, "alert_verify")
+    c = db.get_complaint(complaint_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Complaint not found.")
+    scoped_college(staff, c["college_id"])
+    if not payload.reason.strip():
+        raise HTTPException(status_code=400, detail="Give a reason (recorded in the activity log).")
+    db.hide_complaint_text(complaint_id, payload.reason.strip()[:255], staff)
     return {"ok": True}
 
 
@@ -259,3 +279,54 @@ def export_inspections(college_id: Optional[int] = None, staff=Depends(current_s
                  "general_notes"],
                 [[i["id"], i["created_at"], i["mess_name"], i["inspector_name"], i["score"], bool(i["verified_onsite"]),
                   "; ".join(f["text"] for f in i["summary"]["failed_items"]), i["general_notes"]] for i in rows])
+
+
+# ---------- In-app "my work" counts ----------
+
+@router.get("/my-work")
+def my_work(staff=Depends(current_staff)):
+    """What needs this person's attention right now — shown as badges in the
+    staff app, so nobody depends on email to know there's work waiting."""
+    college_id, mess_id = scoped_college(staff, None), scoped_mess(staff, None)
+    out = {}
+
+    def scope_sql(college_col, mess_col):
+        clauses, params = "", []
+        if college_id:
+            clauses += f" AND {college_col} = %s"
+            params.append(college_id)
+        if mess_id:
+            clauses += f" AND {mess_col} = %s"
+            params.append(mess_id)
+        return clauses, params
+
+    if can(staff, "alert_work"):
+        out["alerts_assigned_to_me"] = db.fetch_one(
+            "SELECT COUNT(*) AS n FROM alerts WHERE owner_staff_id = %s AND resolved = 0", (staff["id"],))["n"]
+        where, params = scope_sql("m.college_id", "a.mess_id")
+        out["alerts_untouched"] = db.fetch_one(
+            "SELECT COUNT(*) AS n FROM alerts a JOIN mess_halls m ON a.mess_id = m.id WHERE a.status = 'open'" + where,
+            params)["n"]
+    if can(staff, "alert_verify"):
+        where, params = scope_sql("m.college_id", "a.mess_id")
+        out["fixes_to_verify"] = db.fetch_one(
+            "SELECT COUNT(*) AS n FROM alerts a JOIN mess_halls m ON a.mess_id = m.id WHERE a.status = 'fixed'" + where,
+            params)["n"]
+    if can(staff, "respond"):
+        where, params = scope_sql("c.college_id", "c.mess_id")
+        out["complaints_unanswered"] = db.fetch_one(
+            "SELECT COUNT(*) AS n FROM complaints c WHERE c.status = 'received' "
+            "AND c.created_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY" + where, params)["n"]
+    if can(staff, "inspect"):
+        today = date.today()
+        rows = db.overview(college_id, mess_id)
+        schedule = db.list_schedule(college_id, mess_id, assigned_staff_id=staff["id"])
+        out["inspections_due"] = sum(
+            1 for r in rows
+            if r["last_inspected_at"] is None
+            or min(d for d in (r["scheduled_due"], r["interval_due"]) if d) <= today
+        )
+        out["inspections_assigned"] = len(schedule)
+    if can(staff, "compliance_edit"):
+        out["compliance_expiring"] = len(db.compliance.list_documents(college_id, mess_id, expiring_within_days=30))
+    return out

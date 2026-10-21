@@ -20,7 +20,7 @@ def list_colleges():
 
 def list_colleges_public():
     """Only what students/the public need — no contact emails."""
-    return fetch_all("SELECT id, name, email_domain FROM colleges ORDER BY name")
+    return fetch_all("SELECT id, name, email_domain, grievance_contact FROM colleges ORDER BY name")
 
 
 def get_college(college_id):
@@ -54,6 +54,36 @@ def delete_college(college_id):
     """Fails (foreign key) while mess halls still exist — callers surface that."""
     with transaction() as cur:
         cur.execute("DELETE FROM colleges WHERE id = %s", (college_id,))
+
+
+def get_college_settings(college_id):
+    """The college's alert rules: defaults overlaid with its own values."""
+    import json
+    from fssai_rules import merge_settings
+    row = fetch_one("SELECT settings FROM colleges WHERE id = %s", (college_id,))
+    return merge_settings(json.loads(row["settings"]) if row and row["settings"] else {})
+
+
+def update_college_settings(college_id, changes):
+    """Merges `changes` into the stored settings; a None value resets that
+    setting to the default."""
+    import json
+    with transaction() as cur:
+        cur.execute("SELECT settings FROM colleges WHERE id = %s FOR UPDATE", (college_id,))
+        row = cur.fetchone()
+        stored = json.loads(row["settings"]) if row and row["settings"] else {}
+        for k, v in changes.items():
+            if v is None:
+                stored.pop(k, None)
+            else:
+                stored[k] = v
+        cur.execute("UPDATE colleges SET settings = %s WHERE id = %s", (json.dumps(stored), college_id))
+
+
+def update_grievance_contact(college_id, contact):
+    with transaction() as cur:
+        cur.execute("UPDATE colleges SET grievance_contact = %s WHERE id = %s",
+                    ((contact or "").strip() or None, college_id))
 
 
 CONTACT_FOR_LEVEL = {"Low": "mess_head_email", "Medium": "principal_email", "High": "fssai_contact_email"}

@@ -5,14 +5,16 @@ alert contacts, mess halls (capacity, kitchen codes) and the checklist.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import auth
 import config
 import db
+import fssai_rules
+import insights
 import notify
-from deps import current_staff, require, require_global_admin, require_mess_in_scope, scoped_college
+from deps import current_staff, rate_limit, require, require_global_admin, require_mess_in_scope, scoped_college
 from permissions import ROLES, capabilities
 
 router = APIRouter(prefix="/staff", tags=["staff"])
@@ -31,7 +33,8 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(payload: LoginRequest, request: Request):
+def login(payload: LoginRequest, request: Request, response: Response):
+    rate_limit(request, "staff_login", 30, 60)
     ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
     account_key = f"acct:{payload.email.strip().lower()}"
     locked = auth.check_lockout(ip_key, account_key)
@@ -49,7 +52,23 @@ def login(payload: LoginRequest, request: Request):
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 6 hours.")
     auth.reset_attempts(ip_key, account_key)
     staff = db.get_staff(account["id"])
-    return {"token": auth.create_staff_token(staff["id"]), "staff": staff_view(staff)}
+    token = auth.start_staff_session(staff["id"], request)
+    auth.set_session_cookie(response, auth.STAFF_COOKIE, token, auth.STAFF_MAX)
+    return {"staff": staff_view(staff)}
+
+
+@router.post("/logout")
+def logout(request: Request, response: Response):
+    db.sessions.revoke(request.cookies.get(auth.STAFF_COOKIE))
+    auth.clear_session_cookie(response, auth.STAFF_COOKIE)
+    return {"ok": True}
+
+
+@router.post("/me/sign-out-everywhere")
+def sign_out_everywhere(response: Response, staff=Depends(current_staff)):
+    count = db.sessions.revoke_staff(staff["id"])
+    auth.clear_session_cookie(response, auth.STAFF_COOKIE)
+    return {"ok": True, "sessions_ended": count}
 
 
 @router.get("/me")
@@ -69,6 +88,9 @@ def change_own_password(payload: ChangePasswordRequest, staff=Depends(current_st
         raise HTTPException(status_code=400, detail="Your current password is incorrect.")
     _check_password(payload.new_password)
     db.update_staff(staff["id"], password_hash=auth.hash_password(payload.new_password))
+    # Anyone else signed in as this person (an old device, someone who saw
+    # the password) is signed out; this session continues.
+    db.sessions.revoke_staff(staff["id"], keep_token=staff["session_token"])
     db.log_activity("staff_password_changed", f"{staff['name']} changed their password",
                     college_id=staff["college_id"], details={"actor": staff["name"]})
     return {"ok": True}
@@ -172,6 +194,8 @@ def update_account(staff_id: int, payload: UpdateStaffRequest, staff=Depends(cur
     db.update_staff(staff_id, name=payload.name, role=payload.role, active=payload.active,
                     password_hash=auth.hash_password(payload.password) if payload.password else None,
                     mess_id=payload.mess_id, clear_mess=payload.clear_mess)
+    if payload.active is False or payload.password:
+        db.sessions.revoke_staff(staff_id)  # deactivated or reset: signed out everywhere
     changes = [k for k in ("name", "role", "active", "mess_id") if getattr(payload, k) is not None]
     if payload.clear_mess:
         changes.append("mess_id")
@@ -219,6 +243,7 @@ class ContactsRequest(BaseModel):
     mess_head_email: Optional[str] = None
     principal_email: Optional[str] = None
     fssai_contact_email: Optional[str] = None
+    grievance_contact: Optional[str] = None  # shown to students on the privacy page
 
 
 @router.patch("/colleges/{college_id}/contacts")
@@ -226,10 +251,51 @@ def update_contacts(college_id: int, payload: ContactsRequest, staff=Depends(cur
     require(staff, "setup")
     scoped_college(staff, college_id)
     db.update_college_contacts(college_id, payload.mess_head_email, payload.principal_email, payload.fssai_contact_email)
+    db.update_grievance_contact(college_id, payload.grievance_contact)
     college = db.get_college(college_id)
     db.log_activity("admin_contacts_updated", f"{staff['name']} updated alert contacts — {college['name']}",
                     college_id=college_id, details={"actor": staff["name"]})
     return {"ok": True}
+
+
+@router.get("/colleges/{college_id}/settings")
+def get_settings(college_id: int, staff=Depends(current_staff)):
+    require(staff, "view")
+    scoped_college(staff, college_id)
+    return {"settings": db.get_college_settings(college_id), "defaults": fssai_rules.DEFAULT_SETTINGS,
+            "bounds": fssai_rules.SETTING_BOUNDS}
+
+
+@router.patch("/colleges/{college_id}/settings")
+def update_settings(college_id: int, changes: dict, staff=Depends(current_staff)):
+    """Alert rules for this college. Send a value to change it, null to go
+    back to the default. Every change is logged with who made it."""
+    require(staff, "setup")
+    scoped_college(staff, college_id)
+    clean, errors = fssai_rules.validate_settings(changes)
+    merged = {**db.get_college_settings(college_id), **{k: v for k, v in clean.items() if v is not None}}
+    for lo, hi in (("category_min", "category_max"), ("mess_min", "mess_max")):
+        if merged[lo] > merged[hi]:
+            errors.append(f"{lo} can't be more than {hi}")
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    before = db.get_college_settings(college_id)
+    db.update_college_settings(college_id, clean)
+    after = db.get_college_settings(college_id)
+    changed = {k: [before[k], after[k]] for k in after if before[k] != after[k]}
+    db.log_activity("admin_settings_changed",
+                    f"{staff['name']} changed alert rules: " + ", ".join(f"{k} {a}→{b}" for k, (a, b) in changed.items()),
+                    college_id=college_id, details={"actor": staff["name"], "changes": changed})
+    return {"settings": after}
+
+
+@router.get("/insights")
+def get_insights(college_id: Optional[int] = None, days: int = 90, staff=Depends(current_staff)):
+    require(staff, "view")
+    college_id = scoped_college(staff, college_id)
+    if not college_id:
+        raise HTTPException(status_code=400, detail="Choose a college.")
+    return insights.college_insights(college_id, max(7, min(days, 365)))
 
 
 @router.delete("/colleges/{college_id}")

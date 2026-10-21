@@ -4,7 +4,7 @@ alerts through their workflow, and escalates/reminds when nothing happens.
 
 Complaint patterns (distinct students, never raw complaint counts):
   * Fast lane — safety-critical categories (food poisoning, insects, foreign
-    objects): FAST_LANE_REPORTERS students within FAST_LANE_HOURS -> High.
+    objects): 3 students within 48 hours (tunable per college) -> High.
   * Category pattern — enough students report the same category within the
     window (threshold scales with the hall's capacity) -> base level + 1.
   * Whole-hall pattern — enough students report anything -> High.
@@ -50,12 +50,14 @@ def _pattern_window_start(pattern_key, **window):
 
 
 def thresholds_for(mess):
+    """This hall's thresholds under its college's (tunable) rules."""
+    s = db.get_college_settings(mess["college_id"])
     return {
-        "category": rules.category_threshold(mess.get("capacity")),
-        "mess": rules.mess_threshold(mess.get("capacity")),
-        "fast_lane": rules.FAST_LANE_REPORTERS,
-        "fast_lane_hours": rules.FAST_LANE_HOURS,
-        "window_days": rules.PATTERN_WINDOW_DAYS,
+        "category": rules.category_threshold(mess.get("capacity"), s),
+        "mess": rules.mess_threshold(mess.get("capacity"), s),
+        "fast_lane": s["fast_lane_reporters"],
+        "fast_lane_hours": s["fast_lane_hours"],
+        "window_days": s["window_days"],
     }
 
 

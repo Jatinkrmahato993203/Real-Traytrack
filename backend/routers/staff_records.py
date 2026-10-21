@@ -9,7 +9,7 @@ import json
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -18,7 +18,8 @@ import db
 import photos
 from broadcaster import Subscriber, broadcaster
 from deps import (current_staff, page, require, require_mess_in_scope, scoped_college, scoped_mess,
-                  staff_from_header)
+                  session_token, staff_for_token)
+import auth
 from permissions import ACTIVITY_PREFIXES, can
 
 router = APIRouter(prefix="/staff", tags=["staff"])
@@ -237,11 +238,10 @@ def _photo_scope(kind, filename):
 
 
 @router.get("/photos/{filename}")
-def get_photo(filename: str, authorization: str = Header(None)):
+def get_photo(filename: str, staff=Depends(current_staff)):
     """Photos for signed-in staff only, and only within their scope. The
     content type comes from the server, and nosniff + a sandboxing CSP stop
     a browser from ever treating the bytes as a page."""
-    staff = staff_from_header(authorization)
     kind, path = photos.find(filename)
     college_id, mess_id = _photo_scope(kind, filename) if kind else (None, None)
     if not path or college_id is None:
@@ -276,11 +276,12 @@ AUTH_RECHECK_SECONDS = 15
 
 @router.get("/activity/stream")
 async def activity_stream(request: Request, after_id: int = 0, college_id: Optional[int] = None,
-                          mess_id: Optional[int] = None, authorization: str = Header(None)):
+                          mess_id: Optional[int] = None):
     """Server-Sent Events. Auth is the normal Bearer header (the frontend
     streams with fetch, so the token never goes in a URL). The account is
     re-checked every few seconds, so revoking access ends the stream."""
-    staff = staff_from_header(authorization)
+    token = session_token(request, auth.STAFF_COOKIE)
+    staff = staff_for_token(token)
     college_id, mess_id, prefixes = _activity_scope(staff, college_id, mess_id)
     backlog = await asyncio.to_thread(db.get_activity, after_id=after_id, college_id=college_id, mess_id=mess_id,
                                       limit=500, only_prefixes=prefixes)
@@ -296,7 +297,7 @@ async def activity_stream(request: Request, after_id: int = 0, college_id: Optio
                 if loop.time() - last_check > AUTH_RECHECK_SECONDS:
                     last_check = loop.time()
                     try:
-                        await asyncio.to_thread(staff_from_header, authorization)
+                        await asyncio.to_thread(staff_for_token, token)
                     except HTTPException:
                         yield "event: expired\ndata: {}\n\n"
                         return

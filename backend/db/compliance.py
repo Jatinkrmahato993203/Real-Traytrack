@@ -4,6 +4,8 @@ medical fitness, FoSTaC training, water tests, pest control — each with an
 expiry date so nothing lapses unnoticed.
 """
 
+import os
+
 from .core import transaction, fetch_all, fetch_one, now_iso
 from . import activity
 
@@ -22,10 +24,10 @@ def add_document(college_id, mess_id, doc_type, title, person_name, reference_no
     with transaction() as cur:
         cur.execute(
             "INSERT INTO compliance_documents (college_id, mess_id, doc_type, title, person_name, reference_no, "
-            "issued_on, expires_on, notes, file_path, created_by_staff_id, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "issued_on, expires_on, notes, file_path, file_name, created_by_staff_id, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (college_id, mess_id, doc_type, title.strip(), person_name, reference_no, issued_on, expires_on,
-             notes, file_path, actor["id"], now_iso()),
+             notes, file_path, os.path.basename(file_path) if file_path else None, actor["id"], now_iso()),
         )
         doc_id = cur.lastrowid
         activity.log(cur, "compliance_added",
@@ -64,8 +66,7 @@ def get_document(doc_id):
 
 
 def get_document_by_file(filename):
-    return fetch_one("SELECT id, college_id, mess_id FROM compliance_documents WHERE file_path LIKE %s",
-                     ("%" + filename,))
+    return fetch_one("SELECT id, college_id, mess_id FROM compliance_documents WHERE file_name = %s", (filename,))
 
 
 def delete_document(doc_id, actor):

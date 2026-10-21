@@ -49,6 +49,35 @@ def clear_failures(key):
         cur.execute("DELETE FROM login_attempts WHERE attempt_key = %s", (key,))
 
 
+# ---------- Rate limits (fixed windows, shared by every process) ----------
+
+def hit(bucket, window_seconds):
+    """Counts one request in `bucket` for the current window; returns
+    (hits so far in this window, seconds until the window resets)."""
+    now = utcnow()
+    epoch = int(now.timestamp())
+    start_epoch = epoch - epoch % window_seconds
+    from datetime import datetime, timezone
+    window_start = datetime.fromtimestamp(start_epoch, tz=timezone.utc).replace(tzinfo=None)
+    with transaction() as cur:
+        cur.execute(
+            "INSERT INTO rate_limits (bucket, window_start, hits) VALUES (%s, %s, 1) "
+            "ON DUPLICATE KEY UPDATE hits = hits + 1",
+            (bucket[:255], to_db(window_start)),
+        )
+        cur.execute("SELECT hits FROM rate_limits WHERE bucket = %s AND window_start = %s",
+                    (bucket[:255], to_db(window_start)))
+        hits = cur.fetchone()["hits"]
+    return hits, start_epoch + window_seconds - epoch
+
+
+def purge_rate_limits(older_than_hours=48):
+    with transaction() as cur:
+        cur.execute("DELETE FROM rate_limits WHERE window_start < UTC_TIMESTAMP() - INTERVAL %s HOUR",
+                    (older_than_hours,))
+        return cur.rowcount
+
+
 # ---------- Background jobs ----------
 
 @contextmanager

@@ -33,10 +33,23 @@ FRONTEND_ORIGINS = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "http:/
 # Public address of the frontend — used in QR codes and email links.
 APP_BASE_URL = os.environ.get("APP_BASE_URL", FRONTEND_ORIGINS[0]).rstrip("/")
 
-# --- Auth ---
-TOKEN_SECRET = os.environ.get("ADMIN_TOKEN_SECRET", "dev-secret-change-me")
-STAFF_TOKEN_HOURS = _int("STAFF_TOKEN_HOURS", 8)
-STUDENT_TOKEN_DAYS = _int("STUDENT_TOKEN_DAYS", 7)
+# --- Sessions (server-side, HttpOnly cookies) ---
+# Staff: signed out after 8 idle hours, and at most 7 days after signing in.
+STAFF_IDLE_HOURS = _int("STAFF_IDLE_HOURS", 8)
+STAFF_MAX_DAYS = _int("STAFF_MAX_DAYS", 7)
+# Students: signed out after 7 idle days, and at most 30 days after signing in.
+STUDENT_IDLE_DAYS = _int("STUDENT_IDLE_DAYS", 7)
+STUDENT_MAX_DAYS = _int("STUDENT_MAX_DAYS", 30)
+# Cookies are Secure automatically when the site is served over HTTPS.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "auto")
+# "lax" works when the frontend and API share a site (e.g. one domain with
+# /api, or localhost:5173 + localhost:8000). Use "none" (HTTPS only) if the
+# API lives on a different site than the frontend.
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").lower()
+
+# Browser end-to-end tests only: lets a test sign in as any student
+# without Google. NEVER enable on a real deployment.
+E2E_TEST_LOGIN = os.environ.get("E2E_TEST_LOGIN", "0") == "1"
 BOOTSTRAP_ADMIN_EMAIL = os.environ.get("MESS_ADMIN_EMAIL", "admin@traytrack.local")
 BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("MESS_ADMIN_PASSWORD", "changeme123")
 
@@ -45,12 +58,18 @@ SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = _int("SMTP_PORT", 587)
+SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "1") != "0"   # 0 only for a local test mail server
+
+# Multiplies every rate limit (tests raise it; never set below 1 in production).
+RATE_LIMIT_SCALE = float(os.environ.get("RATE_LIMIT_SCALE", "1"))
 
 # --- Privacy ---
 # Student identity (email, name) on complaints/ratings is irreversibly
 # anonymized after this many days; their photos are deleted.
 RETENTION_DAYS = _int("RETENTION_DAYS", 365)
 PRIVACY_NOTICE_VERSION = "2026-10"
+# The activity log (audit trail) is trimmed to this many days.
+ACTIVITY_RETENTION_DAYS = _int("ACTIVITY_RETENTION_DAYS", 730)
 
 # --- Files ---
 UPLOAD_ROOT = Path(os.environ.get("UPLOAD_DIR", BASE_DIR / "uploads"))
@@ -63,3 +82,9 @@ LOCAL_TZ = os.environ.get("LOCAL_TZ", "Asia/Kolkata")
 
 # --- Optional error tracking ---
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+
+
+if E2E_TEST_LOGIN and APP_BASE_URL.startswith("https://"):
+    raise RuntimeError("E2E_TEST_LOGIN must never be enabled on an HTTPS (real) deployment.")
+
+COOKIE_SECURE_FLAG = APP_BASE_URL.startswith("https://") if COOKIE_SECURE == "auto" else COOKIE_SECURE == "1"

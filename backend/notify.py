@@ -43,7 +43,8 @@ def send(kind, to_email, subject, body, college_id=None, alert_id=None, recipien
     msg["To"] = to_email
     try:
         with smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=20) as server:
-            server.starttls()
+            if config.SMTP_STARTTLS:
+                server.starttls()
             server.login(config.SMTP_EMAIL, config.SMTP_APP_PASSWORD)
             server.sendmail(config.SMTP_EMAIL, [to_email], msg.as_string())
         db.notifications.record(kind, "sent", college_id, alert_id, recipient_role, shown, subject)

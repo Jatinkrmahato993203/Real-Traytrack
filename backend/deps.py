@@ -11,9 +11,10 @@ someone or changing their role applies immediately. Scope rules:
 
 from typing import Optional
 
-from fastapi import Header, HTTPException
+from fastapi import HTTPException, Request
 
 import auth
+import config
 import db
 from permissions import can
 
@@ -24,31 +25,53 @@ def bearer(authorization: Optional[str]):
     return None
 
 
+def session_token(request: Request, cookie_name: str):
+    """A Bearer header wins (API clients, tests); browsers use the cookie."""
+    return bearer(request.headers.get("authorization")) or request.cookies.get(cookie_name)
+
+
 # ---------- Students ----------
 
-def current_student(authorization: Optional[str] = Header(None)) -> dict:
-    """{"email", "name"} from the signed token issued at /auth/google —
-    never a client-supplied email, which anyone could forge."""
-    token = bearer(authorization)
-    student = auth.verify_student_token(token) if token else None
-    if not student:
+def current_student(request: Request) -> dict:
+    """{"email", "name", "token"} from the server-side session created at
+    /auth/google — never a client-supplied email, which anyone could forge."""
+    token = session_token(request, auth.STUDENT_COOKIE)
+    session = auth.student_session(token)
+    if not session:
         raise HTTPException(status_code=401, detail="Session expired or invalid — please sign in again.")
-    return student
+    return {"email": session["student_email"], "name": session["student_name"] or "", "token": token}
 
 
 # ---------- Staff ----------
 
-def staff_from_header(authorization: Optional[str]) -> dict:
-    token = bearer(authorization)
-    staff_id = auth.verify_staff_token(token) if token else None
-    staff = db.get_staff(staff_id) if staff_id else None
+def staff_for_token(token) -> dict:
+    session = auth.staff_session(token)
+    staff = db.get_staff(session["staff_id"]) if session else None
     if not staff or not staff["active"]:
         raise HTTPException(status_code=401, detail="Session expired or invalid — please log in again.")
+    staff["session_token"] = token
     return staff
 
 
-def current_staff(authorization: Optional[str] = Header(None)) -> dict:
-    return staff_from_header(authorization)
+def current_staff(request: Request) -> dict:
+    """Re-reads the account on every request, so deactivating someone or
+    changing their role applies immediately."""
+    return staff_for_token(session_token(request, auth.STAFF_COOKIE))
+
+
+# ---------- Rate limits ----------
+
+def client_ip(request: Request):
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit(request: Request, name: str, limit: int, window_seconds: int, key: Optional[str] = None):
+    """Shared (all processes) fixed-window limit; raises 429 with
+    Retry-After when exceeded. `key` defaults to the client IP."""
+    hits, reset_in = db.security.hit(f"{name}:{key or client_ip(request)}", window_seconds)
+    if hits > limit * config.RATE_LIMIT_SCALE:
+        raise HTTPException(status_code=429, detail="Too many requests — please slow down and try again shortly.",
+                            headers={"Retry-After": str(max(1, reset_in))})
 
 
 def require(staff: dict, capability: str):
