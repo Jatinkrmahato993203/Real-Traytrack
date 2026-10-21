@@ -11,7 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN useradd --create-home app && mkdir -p /data/uploads /data/logs && chown -R app /data
+RUN useradd --create-home app && mkdir -p /data/uploads /data/logs /data/backups && chown -R app /data
 USER app
 
 ENV UPLOAD_DIR=/data/uploads LOG_DIR=/data/logs
