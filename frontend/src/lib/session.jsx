@@ -1,8 +1,9 @@
-// Student and staff sessions, shared app-wide. Tokens live in localStorage
-// (so a new tab stays signed in); the server is the source of truth, and any
-// 401 drops the session via the "tt-session-expired" event.
+// Student and staff sessions, shared app-wide. The sessions themselves are
+// HttpOnly cookies the app can't read; on load we ask the server who we
+// are. Any 401 from an authenticated call drops the session via the
+// "tt-session-expired" event.
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { getMe, getStaffMe, staffLogin, tokens } from "./api";
+import { getMe, getStaffMe, staffLogin, staffLogout, studentLogout } from "./api";
 
 const StudentContext = createContext(null);
 const StaffContext = createContext(null);
@@ -10,14 +11,9 @@ const StaffContext = createContext(null);
 export function SessionProvider({ children }) {
   // ---- student ----
   const [me, setMe] = useState(null);
-  const [studentChecking, setStudentChecking] = useState(!!tokens.student());
+  const [studentChecking, setStudentChecking] = useState(true);
 
   const refreshMe = useCallback(async () => {
-    if (!tokens.student()) {
-      setMe(null);
-      setStudentChecking(false);
-      return null;
-    }
     try {
       const data = await getMe();
       setMe(data);
@@ -30,60 +26,55 @@ export function SessionProvider({ children }) {
     }
   }, []);
 
-  const studentSignIn = useCallback((data) => {
-    tokens.setStudent(data.token);
-    const { token: _token, ...rest } = data;
-    setMe(rest);
-  }, []);
+  const studentSignIn = useCallback((data) => setMe(data), []);
 
-  const studentSignOut = useCallback(() => {
-    tokens.setStudent(null);
+  const studentSignOut = useCallback(async () => {
     setMe(null);
+    try { await studentLogout(); } catch { /* already signed out */ }
   }, []);
 
   // ---- staff ----
   const [staff, setStaff] = useState(null);
-  const [staffChecking, setStaffChecking] = useState(!!tokens.staff());
+  const [staffChecking, setStaffChecking] = useState(true);
   const [staffNotice, setStaffNotice] = useState("");
 
   useEffect(() => {
     refreshMe();
-    if (tokens.staff()) {
-      getStaffMe()
-        .then(setStaff)
-        .catch(() => tokens.setStaff(null))
-        .finally(() => setStaffChecking(false));
-    }
+    getStaffMe()
+      .then(setStaff)
+      .catch(() => setStaff(null))
+      .finally(() => setStaffChecking(false));
   }, [refreshMe]);
 
   const staffSignIn = useCallback(async (email, password) => {
     const data = await staffLogin(email, password);
-    tokens.setStaff(data.token);
     setStaffNotice("");
     setStaff(data.staff);
     return data.staff;
   }, []);
 
-  const staffSignOut = useCallback((notice = "") => {
-    tokens.setStaff(null);
+  const staffSignOut = useCallback(async (notice = "") => {
     setStaff(null);
     setStaffNotice(notice);
+    if (!notice) {
+      try { await staffLogout(); } catch { /* already signed out */ }
+    }
   }, []);
 
   useEffect(() => {
     const onExpired = (e) => {
-      if (e.detail === "staff") staffSignOut("Your session expired or your access changed — please log in again.");
-      if (e.detail === "student") studentSignOut();
+      if (e.detail === "staff") staffSignOut("Your session expired or your access changed — please sign in again.");
+      if (e.detail === "student") setMe(null);
     };
     window.addEventListener("tt-session-expired", onExpired);
     return () => window.removeEventListener("tt-session-expired", onExpired);
-  }, [staffSignOut, studentSignOut]);
+  }, [staffSignOut]);
 
   const can = useCallback((cap) => !!staff?.capabilities?.includes(cap), [staff]);
 
   return (
     <StudentContext.Provider value={{ me, checking: studentChecking, refreshMe, signIn: studentSignIn, signOut: studentSignOut }}>
-      <StaffContext.Provider value={{ staff, checking: staffChecking, notice: staffNotice, signIn: staffSignIn, signOut: staffSignOut, can }}>
+      <StaffContext.Provider value={{ staff, setStaff, checking: staffChecking, notice: staffNotice, signIn: staffSignIn, signOut: staffSignOut, can }}>
         {children}
       </StaffContext.Provider>
     </StudentContext.Provider>

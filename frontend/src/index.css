@@ -283,6 +283,15 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .login-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 32px 26px; text-align: center; }
 .google-btn-wrap { display: flex; justify-content: center; margin: 18px 0; }
 
+/* Badges, stats, rules */
+.badge { display: inline-block; min-width: 20px; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--danger); color: white; font-size: 12px; line-height: 20px; text-align: center; }
+.tab-btn.active .badge { background: white; color: var(--danger); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 14px 0; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.stat-value { font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 700; color: var(--moss-dark); }
+.stat-label { font-weight: 600; font-size: 13.5px; }
+.rules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+
 /* ---------- Printable QR sheets ---------- */
 .print-sheet { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
 .print-card { text-align: center; padding: 24px; }

@@ -1,6 +1,6 @@
 // Small shared building blocks used across pages.
 import { useEffect, useState } from "react";
-import { staffBlobUrl } from "../lib/api";
+import { fileUrl } from "../lib/api";
 import { formatDateTime, timeAgo } from "../lib/time";
 import { useI18n } from "../lib/i18n";
 
@@ -70,23 +70,14 @@ export function useAsync(fn, deps) {
   return { ...state, reload: () => setTick((n) => n + 1) };
 }
 
-// Staff-only photo: fetched with the staff token, shown via a blob URL.
+// Staff-only photo: the session cookie authorises it, so a plain <img> works.
 export function StaffPhoto({ url, alt = "Attached photo", className = "photo-thumb" }) {
-  const [src, setSrc] = useState(null);
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let objectUrl;
-    let cancelled = false;
-    staffBlobUrl(url)
-      .then((u) => { objectUrl = u; if (!cancelled) setSrc(u); else URL.revokeObjectURL(u); })
-      .catch(() => !cancelled && setFailed(true));
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [url]);
   if (failed) return <p className="hint">Photo unavailable.</p>;
-  if (!src) return <p className="hint">Loading photo…</p>;
+  const src = fileUrl(url);
   return (
     <a href={src} target="_blank" rel="noreferrer">
-      <img src={src} alt={alt} className={className} />
+      <img src={src} alt={alt} className={className} loading="lazy" onError={() => setFailed(true)} />
     </a>
   );
 }

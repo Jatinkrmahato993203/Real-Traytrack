@@ -1,4 +1,5 @@
-import { getPrivacyInfo } from "../lib/api";
+import { getColleges, getPrivacyInfo } from "../lib/api";
+import { useStudent } from "../lib/session";
 import { useI18n } from "../lib/i18n";
 import { useAsync } from "../components/ui";
 
@@ -28,6 +29,10 @@ const TEXT = {
 export default function Privacy() {
   const { t, lang } = useI18n();
   const info = useAsync(getPrivacyInfo, []);
+  const colleges = useAsync(getColleges, []);
+  const { me } = useStudent();
+  // Signed-in students see their own college's contact; others see all.
+  const contacts = (colleges.data || []).filter((c) => !me?.college || c.id === me.college.id);
   const days = info.data?.retention_days ?? 365;
   return (
     <div className="content">
@@ -39,6 +44,14 @@ export default function Privacy() {
           <p>{p}</p>
         </section>
       ))}
+      <section>
+        <h2 className="h3">{t("privacy.contacts")}</h2>
+        <ul className="plain-list">
+          {contacts.map((c) => (
+            <li key={c.id}><strong>{c.name}:</strong> {c.grievance_contact || <span className="hint">{t("privacy.noContact")}</span>}</li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

@@ -47,6 +47,7 @@ function ReportCard({ c, onVoted }) {
         {c.meal && t(`meal.${c.meal}`)}{c.dish && ` · ${c.dish}`}{c.anonymous && ` · ${t("my.anon")}`}
       </p>
       {c.description && <p>{c.description}</p>}
+      {c.hidden_reason && <p className="hint">{t("my.hidden", { reason: c.hidden_reason })}</p>}
       <Progress status={c.status} />
       {c.staff_response ? (
         <div className="response">

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import {
-  addChecklistItem, addCollege, addMessHall, deleteCollege, deleteMessHall, getChecklist, newKitchenCode,
-  setupHealth, staffColleges, staffMessHalls, updateChecklistItem, updateContacts, updateMessHall,
+  addChecklistItem, addCollege, addMessHall, deleteCollege, deleteMessHall, getChecklist, getCollegeSettings,
+  newKitchenCode, setupHealth, staffColleges, staffMessHalls, updateChecklistItem, updateCollegeSettings,
+  updateContacts, updateMessHall,
 } from "../../lib/api";
 import { useStaff } from "../../lib/session";
 import { ErrorBanner, Loading, useAsync } from "../../components/ui";
@@ -93,6 +94,7 @@ function Contacts({ college, health, onSaved }) {
   const [form, setForm] = useState({
     mess_head_email: college.mess_head_email || "", principal_email: college.principal_email || "",
     fssai_contact_email: college.fssai_contact_email || "",
+    grievance_contact: college.grievance_contact || "",
   });
   const [msg, setMsg] = useState(null);
   const missing = health?.missing_contacts || [];
@@ -110,6 +112,11 @@ function Contacts({ college, health, onSaved }) {
           </label>
         ))}
       </div>
+      <label className="field"><span className="field-label">Privacy / grievance contact (shown to students)</span>
+        <input value={form.grievance_contact} placeholder="e.g. Grievance Officer, grievance@college.ac.in"
+          onChange={(e) => setForm({ ...form, grievance_contact: e.target.value })} />
+        <span className="hint">Who students contact about their personal data. India's DPDP Act expects one to be named.</span>
+      </label>
       <button type="submit" className="secondary-btn">Save contacts</button>
       {typeof msg === "string" ? <span className="ok-text"> {msg}</span> : <ErrorBanner error={msg} />}
     </form>
@@ -151,6 +158,62 @@ function Checklist({ college }) {
       </form>
       <ErrorBanner error={error} />
     </>
+  );
+}
+
+const RULES = [
+  ["fast_lane_reporters", "Safety fast lane: students", "Food poisoning, insects or foreign objects reported by this many different students…"],
+  ["fast_lane_hours", "…within this many hours", "…raise a High alert immediately."],
+  ["window_days", "Pattern window (days)", "How far back other patterns look."],
+  ["category_pct", "Same problem: % of diners", "Different students reporting the same category, as a share of the hall's diners."],
+  ["category_min", "Same problem: minimum", "Never fewer students than this…"],
+  ["category_max", "Same problem: maximum", "…never more than this. Also used for halls without a capacity."],
+  ["mess_pct", "Anything at a hall: % of diners", "Different students reporting any problem at one hall → High alert."],
+  ["mess_min", "Anything at a hall: minimum", ""],
+  ["mess_max", "Anything at a hall: maximum", ""],
+  ["votes_needed", "Students to confirm a fix", "Reporting students who can close a pattern alert by saying it's fixed."],
+  ["inspection_interval_days", "Inspect every (days)", "A hall becomes overdue this long after its last inspection."],
+];
+
+function AlertRules({ college }) {
+  const data = useAsync(() => getCollegeSettings(college.id), [college.id]);
+  const [draft, setDraft] = useState({});
+  const [msg, setMsg] = useState(null);
+  if (!data.data) return <Loading />;
+  const { settings, defaults, bounds } = data.data;
+  const changed = Object.keys(draft).filter((k) => String(draft[k]) !== String(settings[k]));
+  return (
+    <form className="contact-form" onSubmit={async (e) => {
+      e.preventDefault();
+      setMsg(null);
+      try {
+        await updateCollegeSettings(college.id, Object.fromEntries(changed.map((k) => [k, draft[k] === "" ? null : Number(draft[k])])));
+        setDraft({});
+        data.reload();
+        setMsg("Saved — applies to new complaints from now on.");
+      } catch (err) { setMsg(err); }
+    }}>
+      <p className="hint">Starting values are educated guesses. Check <a href="/admin/insights">Insights</a> to see what each value would have produced on your own data before changing them. Every change is logged.</p>
+      <div className="rules-grid">
+        {RULES.map(([key, label, help]) => (
+          <label key={key} className="field">
+            <span className="field-label">{label}</span>
+            <input type="number" step={key.endsWith("_pct") ? "0.5" : "1"} min={bounds[key][0]} max={bounds[key][1]}
+              value={draft[key] ?? settings[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} />
+            <span className="hint small">{help} Default {defaults[key]}; allowed {bounds[key][0]}–{bounds[key][1]}.</span>
+          </label>
+        ))}
+      </div>
+      <div className="button-row">
+        <button type="submit" className="primary-btn" disabled={!changed.length}>Save {changed.length || ""} change(s)</button>
+        <button type="button" className="link-btn" onClick={async () => {
+          if (!confirm("Reset every rule for this college to the defaults?")) return;
+          await updateCollegeSettings(college.id, Object.fromEntries(Object.keys(defaults).map((k) => [k, null])));
+          setDraft({}); data.reload(); setMsg("Reset to defaults.");
+        }}>Reset to defaults</button>
+      </div>
+      {typeof msg === "string" ? <p className="ok-text">{msg}</p> : <ErrorBanner error={msg} />}
+    </form>
   );
 }
 
@@ -205,12 +268,13 @@ export default function Setup() {
             </div>
             {h?.missing_contacts.length > 0 && section !== "contacts" && <p className="warn-text small">⚠ Missing alert contacts: {h.missing_contacts.join(", ").replaceAll("_", " ")}</p>}
             <div className="sub-tabs" role="tablist">
-              {[["halls", "Mess halls & QR codes"], ["contacts", "Alert contacts"], ["checklist", "Inspection checklist"]].map(([k, l]) => (
+              {[["halls", "Mess halls & QR codes"], ["contacts", "Contacts"], ["rules", "Alert rules"], ["checklist", "Inspection checklist"]].map(([k, l]) => (
                 <button key={k} type="button" role="tab" aria-selected={section === k} className={section === k ? "active" : ""} onClick={() => setOpen({ ...open, [c.id]: k })}>{l}</button>
               ))}
             </div>
             {section === "halls" && <Halls college={c} />}
             {section === "contacts" && <Contacts college={c} health={h} onSaved={() => { colleges.reload(); health.reload(); }} />}
+            {section === "rules" && <AlertRules college={c} />}
             {section === "checklist" && <Checklist college={c} />}
           </section>
         );

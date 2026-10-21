@@ -5,19 +5,11 @@ import { useI18n } from "../../lib/i18n";
 import { useStudent } from "../../lib/session";
 import { ErrorBanner, Field, Loading, Severity, useAsync } from "../../components/ui";
 import StudentGate from "./StudentGate";
+import { currentMeal } from "../../lib/meal";
 
 const MAX_PHOTO = 4 * 1024 * 1024;
 // Who an alert of each level goes to (mirrors the backend's authority chain).
 const AUTHORITY = { Low: "Mess Head", Medium: "Principal", High: "FSSAI" };
-
-// Pre-selects the meal by time of day (local time).
-function currentMeal() {
-  const h = new Date().getHours();
-  if (h < 11) return "breakfast";
-  if (h < 16) return "lunch";
-  if (h < 19) return "snacks";
-  return "dinner";
-}
 
 function ReportForm() {
   const { t, tCategory } = useI18n();

@@ -28,7 +28,7 @@ export default function StudentGate({ children, requireCollege = true }) {
               onSuccess={async (cred) => {
                 setError(null);
                 try {
-                  signIn(await loginWithGoogle(cred.credential));
+                  signIn(await loginWithGoogle(cred.credential));  // the server sets the session cookie
                 } catch (e) {
                   setError(e);
                 }

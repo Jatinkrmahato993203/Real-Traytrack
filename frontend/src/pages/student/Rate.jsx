@@ -6,14 +6,7 @@ import { useStudent } from "../../lib/session";
 import { todayIso } from "../../lib/time";
 import { ErrorBanner, Field, Loading, useAsync } from "../../components/ui";
 import StudentGate from "./StudentGate";
-
-function currentMeal() {
-  const h = new Date().getHours();
-  if (h < 11) return "breakfast";
-  if (h < 16) return "lunch";
-  if (h < 19) return "snacks";
-  return "dinner";
-}
+import { currentMeal } from "../../lib/meal";
 
 function Stars({ value, onChange }) {
   const { t } = useI18n();

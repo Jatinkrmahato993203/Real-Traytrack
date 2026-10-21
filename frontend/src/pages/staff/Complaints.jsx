@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { downloadStaffFile, getCategories, getMeals, onNewActivity, respondToComplaint, searchComplaints } from "../../lib/api";
+import { downloadStaffFile, getCategories, getMeals, hideComplaint, onNewActivity, respondToComplaint, searchComplaints } from "../../lib/api";
 import { useStaff } from "../../lib/session";
 import { formatDateTime } from "../../lib/time";
 import { ErrorBanner, Loading, Pager, StaffPhoto, useAsync, When } from "../../components/ui";
@@ -111,8 +111,16 @@ export default function Complaints() {
             <span className={`pill pill-${c.status}`}>{COMPLAINT_STATUS_LABEL[c.status]}</span>
           </p>
           {c.description && <p>{c.description}</p>}
+          {c.hidden_reason && <p className="hint">Text hidden by staff: {c.hidden_reason}</p>}
           {c.photo_url && <StaffPhoto url={c.photo_url} />}
           {c.staff_response && <p className="response"><strong>Reply:</strong> {c.staff_response} <span className="hint">({formatDateTime(c.responded_at)})</span></p>}
+          {can("alert_verify") && c.description && (
+            <button type="button" className="link-btn danger" style={{ marginRight: 14 }} onClick={async () => {
+              const reason = prompt("Hide this complaint's text? Use for abuse or text that names/identifies someone. Reason:");
+              if (!reason?.trim()) return;
+              try { await hideComplaint(c.id, reason.trim()); list.reload(); } catch (e) { alert(e.message); }
+            }}>Hide text</button>
+          )}
           {can("respond") && (openReply === c.id
             ? <Reply c={c} onDone={() => { setOpenReply(null); list.reload(); }} />
             : <button type="button" className="link-btn" onClick={() => setOpenReply(c.id)}>{c.staff_response ? "Update reply" : "Reply / update status"}</button>)}

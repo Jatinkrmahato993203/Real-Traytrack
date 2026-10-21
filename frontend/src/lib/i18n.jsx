@@ -146,6 +146,7 @@ const en = {
   "my.voteWait": "You can confirm a fix in about {h} hour(s).",
   "my.resolvedOn": "Resolved {when}",
   "my.anon": "Reported anonymously",
+  "my.hidden": "The mess team hid the text of this report: {reason}",
   "my.dataTitle": "Your data",
   "my.dataText": "Download everything you've submitted, or delete your identity, text and photos from all of it.",
   "my.download": "Download my data",
@@ -168,6 +169,8 @@ const en = {
   "trends.none": "Nothing in this range.",
 
   "privacy.title": "Privacy notice",
+  "privacy.contacts": "Who to contact about your data",
+  "privacy.noContact": "Your college hasn't named a contact yet — ask the mess committee.",
 
   "error.generic": "Something went wrong.",
   "error.notFound": "Page not found.",
@@ -316,6 +319,7 @@ const hi = {
   "my.voteWait": "आप लगभग {h} घंटे में सुधार की पुष्टि कर सकेंगे।",
   "my.resolvedOn": "{when} हल हुआ",
   "my.anon": "गुमनाम रूप से शिकायत की गई",
+  "my.hidden": "मेस टीम ने इस शिकायत का विवरण छिपा दिया: {reason}",
   "my.dataTitle": "आपका डेटा",
   "my.dataText": "आपने जो कुछ भी जमा किया है उसे डाउनलोड करें, या उसमें से अपनी पहचान, विवरण और फ़ोटो हटा दें।",
   "my.download": "मेरा डेटा डाउनलोड करें",
@@ -338,6 +342,8 @@ const hi = {
   "trends.none": "इस अवधि में कुछ नहीं।",
 
   "privacy.title": "गोपनीयता सूचना",
+  "privacy.contacts": "अपने डेटा के बारे में किससे संपर्क करें",
+  "privacy.noContact": "आपके कॉलेज ने अभी संपर्क नहीं बताया है — मेस समिति से पूछें।",
 
   "error.generic": "कुछ गलत हो गया।",
   "error.notFound": "पेज नहीं मिला।",

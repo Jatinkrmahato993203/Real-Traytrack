@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { changeOwnPassword } from "../../lib/api";
+import { changeOwnPassword, signOutEverywhere } from "../../lib/api";
 import { useStaff } from "../../lib/session";
 import { ErrorBanner, Field } from "../../components/ui";
 
@@ -18,7 +18,7 @@ const CAP_TEXT = {
 };
 
 export default function Account() {
-  const { staff } = useStaff();
+  const { staff, signOut } = useStaff();
   const [form, setForm] = useState({ current: "", next: "", confirm: "" });
   const [error, setError] = useState(null);
   const [done, setDone] = useState(false);
@@ -47,7 +47,16 @@ export default function Account() {
         <ErrorBanner error={error} />
         {done && <div className="banner success">Password changed.</div>}
         <button type="submit" className="primary-btn">Change password</button>
+        <p className="hint">Changing your password signs you out on every other device.</p>
       </form>
+      <section className="form-card">
+        <h3>Sessions</h3>
+        <p className="hint">Lost a phone or used a shared computer? Sign out of TrayTrack everywhere, including here.</p>
+        <button type="button" className="danger-btn" onClick={async () => {
+          if (!confirm("Sign out on every device?")) return;
+          try { await signOutEverywhere(); } finally { signOut("You've been signed out everywhere."); }
+        }}>Sign out everywhere</button>
+      </section>
     </>
   );
 }

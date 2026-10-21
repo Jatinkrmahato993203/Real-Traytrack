@@ -1,11 +1,18 @@
 // Every call to the backend goes through request(), so errors look the same
 // everywhere: an ApiError with a readable message, the HTTP status, and the
 // server's request id (quoted in "Something went wrong" messages).
+//
+// Sign-in sessions live in HttpOnly cookies set by the server — this code
+// never sees or stores a token, so a script injected into the page can't
+// steal one. Every request sends X-TrayTrack, which the server requires on
+// cookie-authenticated writes (CSRF protection).
 
 export const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:8000").replace(/\/$/, "");
 
-const STUDENT_TOKEN = "tt_student_token";
-const STAFF_TOKEN = "tt_staff_token";
+// Tokens from older versions of the app lived in localStorage; drop them.
+try {
+  ["tt_student_token", "tt_staff_token", "user_token", "staff_token", "admin_token"].forEach((k) => localStorage.removeItem(k));
+} catch { /* storage blocked */ }
 
 export class ApiError extends Error {
   constructor(message, status, requestId, detail) {
@@ -15,21 +22,6 @@ export class ApiError extends Error {
     this.detail = detail;
   }
 }
-
-function safeStorage() {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-export const tokens = {
-  student: () => safeStorage()?.getItem(STUDENT_TOKEN) || null,
-  staff: () => safeStorage()?.getItem(STAFF_TOKEN) || null,
-  setStudent: (t) => (t ? safeStorage()?.setItem(STUDENT_TOKEN, t) : safeStorage()?.removeItem(STUDENT_TOKEN)),
-  setStaff: (t) => (t ? safeStorage()?.setItem(STAFF_TOKEN, t) : safeStorage()?.removeItem(STAFF_TOKEN)),
-};
 
 function messageFrom(body, status) {
   const d = body?.detail;
@@ -41,9 +33,7 @@ function messageFrom(body, status) {
 }
 
 async function request(path, { method = "GET", body, form, auth, signal, raw } = {}) {
-  const headers = {};
-  const token = auth === "staff" ? tokens.staff() : auth === "student" ? tokens.student() : null;
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const headers = { "X-TrayTrack": "1" };
   let payload;
   if (form) payload = form;
   else if (body !== undefined) {
@@ -53,7 +43,7 @@ async function request(path, { method = "GET", body, form, auth, signal, raw } =
 
   let res;
   try {
-    res = await fetch(`${API_BASE}${path}`, { method, headers, body: payload, signal });
+    res = await fetch(`${API_BASE}${path}`, { method, headers, body: payload, signal, credentials: "include" });
   } catch (err) {
     if (err.name === "AbortError") throw err;
     throw new ApiError(messageFrom(null, 0), 0);
@@ -107,6 +97,7 @@ export const getTrends = (collegeId, start, end) =>
 
 // ---------- Student ----------
 export const loginWithGoogle = (credential) => request("/auth/google", { method: "POST", body: { credential } });
+export const studentLogout = () => request("/auth/logout", { method: "POST" });
 export const getMe = () => request("/me", { auth: "student" });
 export const acceptPrivacy = (version) => request("/me/consent", { method: "POST", body: { version }, auth: "student" });
 export const submitComplaint = (fields, photo) =>
@@ -116,13 +107,20 @@ export const voteFixed = (alertId) =>
   request("/my-complaints/resolve", { method: "POST", body: { alert_id: alertId }, auth: "student" });
 export const rateMeal = (body) => request("/ratings", { method: "POST", body, auth: "student" });
 export const getMyRatings = () => request("/my-ratings", { auth: "student" });
-export const exportMyData = () => request("/me/data", { auth: "student", raw: true });
+
 export const eraseMyData = () => request("/me/data", { method: "DELETE", auth: "student" });
 
 // ---------- Staff ----------
 const s = (path, opts = {}) => request(`/staff${path}`, { ...opts, auth: "staff" });
 
 export const staffLogin = (email, password) => request("/staff/login", { method: "POST", body: { email, password } });
+export const staffLogout = () => request("/staff/logout", { method: "POST" });
+export const signOutEverywhere = () => s("/me/sign-out-everywhere", { method: "POST" });
+export const getCollegeSettings = (id) => s(`/colleges/${id}/settings`);
+export const updateCollegeSettings = (id, changes) => s(`/colleges/${id}/settings`, { method: "PATCH", body: changes });
+export const getInsights = (collegeId, days) => s(`/insights${qs({ college_id: collegeId, days })}`);
+export const getMyWork = () => s("/my-work");
+export const hideComplaint = (id, reason) => s(`/complaints/${id}/hide`, { method: "POST", body: { reason } });
 export const getStaffMe = () => s("/me");
 export const changeOwnPassword = (current_password, new_password) =>
   s("/me/password", { method: "POST", body: { current_password, new_password } });
@@ -174,34 +172,22 @@ export const deleteCompliance = (id) => s(`/compliance/${id}`, { method: "DELETE
 export const listNotifications = (params) => s(`/notifications${qs(params)}`);
 export const getActivity = (params) => s(`/activity${qs(params)}`);
 
-// Protected files (photos, exports) need the staff header, which <img> and
-// <a download> can't send — so fetch them and hand back a blob URL.
-export async function staffBlobUrl(path) {
-  const res = await request(path.replace(/^\/admin\/complaint-photos\//, "/staff/photos/"), { auth: "staff", raw: true });
-  return URL.createObjectURL(await res.blob());
-}
+// Protected files (photos, CSV exports, the student's data export) are
+// authorised by the session cookie, so plain links and <img> work.
+export const fileUrl = (path) => `${API_BASE}${path.replace(/^\/admin\/complaint-photos\//, "/staff/photos/")}`;
 
-export async function downloadStaffFile(path, filename) {
-  const url = await staffBlobUrl(path);
+export function download(path) {
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
+  a.href = fileUrl(path);
+  a.rel = "noopener";
   a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-export async function downloadStudentData() {
-  const res = await exportMyData();
-  const url = URL.createObjectURL(await res.blob());
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "traytrack-my-data.json";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
+export const downloadStaffFile = (path) => download(path);
+export const downloadStudentData = () => download("/me/data");
 
-// Live activity over Server-Sent Events, via fetch so the staff token goes
-// in a header, never the URL. Reconnects from the last event it saw.
+// Live activity over Server-Sent Events (the session cookie authenticates
+// it). Reconnects from the last event it saw.
 export function streamActivity({ afterId = 0, collegeId, messId, onEvent, onStatus }) {
   let lastId = afterId;
   let stopped = false;
@@ -212,7 +198,7 @@ export function streamActivity({ afterId = 0, collegeId, messId, onEvent, onStat
       controller = new AbortController();
       try {
         const res = await fetch(`${API_BASE}/staff/activity/stream${qs({ after_id: lastId, college_id: collegeId, mess_id: messId })}`, {
-          headers: { Authorization: `Bearer ${tokens.staff()}` },
+          credentials: "include",
           signal: controller.signal,
         });
         if (res.status === 401) {

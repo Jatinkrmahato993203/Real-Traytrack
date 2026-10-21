@@ -86,6 +86,27 @@ and on expiry · setup (halls, capacity, **printable QR sheets**, kitchen codes,
 alert contacts, checklist) · staff accounts · notification delivery health ·
 **CSV exports** for audits.
 
+### Security
+- **Sessions** are server-side and live in **HttpOnly cookies**: page scripts
+  can't read them, the database stores only a hash, they expire after inactivity
+  (staff 8 h, students 7 days) and at an absolute maximum, and they can be
+  revoked — sign out, "sign out everywhere", password change (other devices),
+  deactivation and data erasure all end sessions immediately.
+- **CSRF**: cookie-authenticated writes must carry an `X-TrayTrack` header that
+  other sites can't send.
+- **Rate limits** on sign-in, complaints and ratings (shared across server
+  processes) and on anonymous reads; `429` with `Retry-After`.
+- **Content-Security-Policy** and other security headers on the app (nginx /
+  `vite preview`) and on every API response. The browser tests run under the
+  production CSP, so a policy mistake fails CI.
+
+### Pilot tuning
+The alert thresholds are starting guesses. Each college can tune them in
+**Admin → Setup → Alert rules** (every change logged), and **Admin → Insights**
+shows, from the college's own history, how many alerts each threshold value
+would have raised — plus response times, reopen rate and notification
+delivery. Recommended: run one hall for 4 weeks, then tune.
+
 ### Honest notifications
 Every email attempt is recorded (sent / no contact / email not set up / failed).
 The public dashboard only says an authority was notified when an email was
@@ -145,7 +166,7 @@ migrations; existing databases upgrade in place).
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env      # set DB_PASSWORD, ADMIN_TOKEN_SECRET, ...
+cp .env.example .env      # set DB_PASSWORD, SMTP, ...
 uvicorn main:app --reload
 ```
 Runs at `http://localhost:8000` (`/health` shows database, schema version
@@ -175,11 +196,28 @@ Runs at `http://localhost:5173`.
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest                 # 60 API tests, incl. real SMTP to a local mail server
 ```
 The suite creates and drops its own database (`traytrack_test`, override with
-`TEST_DB_NAME`) on the server in `backend/.env`. CI runs it on every push
-(`.github/workflows/ci.yml`), plus frontend lint and build.
+`TEST_DB_NAME`) on the server in `backend/.env`.
+
+Browser tests (Playwright) start a fresh backend + the production build and
+drive them in a real browser — report → alert → fix with proof → verify,
+inspections, live feed, cookie/CSRF security, Hindi, and phone layouts
+(screenshots saved to `frontend/e2e-screenshots/`):
+```bash
+cd frontend
+npx playwright test              # uses installed Microsoft Edge
+PW_CHANNEL=chromium npx playwright test   # or Playwright's Chromium (npx playwright install chromium)
+```
+CI (`.github/workflows/ci.yml`) runs backend tests, lint + build, and the
+browser tests on every push.
+
+### 6. Things that need people, not code
+`docs/review/` has what a reviewer needs:
+- `privacy-review.md` — every data flow and the questions for a legal review.
+- `hindi-review.csv` — every Hindi string with columns for a native speaker's
+  corrections (`node docs/review/export-hindi.mjs` regenerates it).
 
 ---
 
@@ -203,7 +241,7 @@ inspectors and anyone read-only.
 ### Docker (recommended)
 ```bash
 cp .env.example .env                 # compose settings: DB passwords, public URL, Google client id
-cp backend/.env.example backend/.env # app settings: ADMIN_TOKEN_SECRET, SMTP, ...
+cp backend/.env.example backend/.env # app settings: SMTP, retention, ...
 docker compose up -d --build
 ```
 Serves everything on `http://localhost:8080`: nginx serves the app and proxies
@@ -211,7 +249,7 @@ Serves everything on `http://localhost:8080`: nginx serves the app and proxies
 Put HTTPS in front (Caddy, a cloud load balancer, or certbot).
 
 ### Before real use — checklist
-- [ ] `ADMIN_TOKEN_SECRET` set to a long random value.
+- [ ] `E2E_TEST_LOGIN` is **not** set (it's refused on HTTPS anyway).
 - [ ] Bootstrap admin password changed; real per-person accounts created.
 - [ ] `SMTP_EMAIL` / `SMTP_APP_PASSWORD` set; **Admin → Notifications** shows
       all contacts present and emails sending.
