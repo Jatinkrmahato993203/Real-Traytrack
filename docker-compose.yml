@@ -1,0 +1,59 @@
+# Production-like stack: MySQL + API + web (nginx) on http://localhost:8080
+#
+#   cp backend/.env.example backend/.env    # then set real secrets
+#   docker compose up -d --build
+#
+# Data lives in named volumes (db, uploads, logs). Back up with:
+#   docker compose exec backend python scripts/backup.py
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-mess_monitor}
+      MYSQL_USER: ${DB_USER:-traytrack}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: db
+      DB_USER: ${DB_USER:-traytrack}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-mess_monitor}
+      FRONTEND_ORIGIN: ${PUBLIC_URL:-http://localhost:8080}
+      APP_BASE_URL: ${PUBLIC_URL:-http://localhost:8080}
+      BACKUP_DIR: /data/backups
+    volumes:
+      - uploads:/data/uploads
+      - logs:/data/logs
+      - backups:/data/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  db:
+  uploads:
+  logs:
+  backups:
