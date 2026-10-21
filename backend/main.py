@@ -11,6 +11,7 @@ alert_engine.py / fssai_rules.py / permissions.py.
 """
 
 import logging
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -26,6 +27,13 @@ import db
 import jobs
 from broadcaster import broadcaster
 from routers import public, staff_cases, staff_records, staff_setup, student
+
+# Windows consoles default to a legacy code page; log text has — and ₹.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 config.LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(

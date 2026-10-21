@@ -237,3 +237,15 @@ def test_broadcaster_filters():
     assert not s.wants({"college_id": 9, "mess_id": 2, "event_type": "complaint_submitted"})
     assert not s.wants({"college_id": 1, "mess_id": 3, "event_type": "complaint_submitted"})
     assert not s.wants({"college_id": 1, "mess_id": 2, "event_type": "alert_created"})
+
+
+def test_never_inspected_hall_is_due_now(client, college, admin_token):
+    halls = client.get("/staff/inspection-overview", headers=hdr(admin_token)).json()["halls"]
+    other = next(h for h in halls if h["mess_id"] == college["other_mess"])
+    assert other["never_inspected"] and other["overdue"] and other["next_due"] == str(date.today())
+
+
+def test_weekly_digest_runs_and_is_recorded(client, college):
+    assert jobs.weekly_digest() >= 2
+    rows, _ = db.notifications.list_notifications(college_id=college["id"])
+    assert any(n["kind"] == "weekly_digest" for n in rows)

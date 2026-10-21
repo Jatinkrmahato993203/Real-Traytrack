@@ -216,8 +216,8 @@ def overview(college_id=None, mess_id=None):
         "  (SELECT MAX(created_at) FROM inspections WHERE mess_id = m.id) AS last_inspected_at, "
         "  (SELECT score FROM inspections WHERE mess_id = m.id ORDER BY id DESC LIMIT 1) AS last_score, "
         "  (SELECT MIN(due_date) FROM inspection_schedule WHERE mess_id = m.id AND completed_inspection_id IS NULL) AS scheduled_due, "
-        "  DATE(COALESCE((SELECT MAX(created_at) FROM inspections WHERE mess_id = m.id), '2000-01-01') "
-        f"       + INTERVAL {INSPECTION_INTERVAL_DAYS} DAY) AS interval_due "
+        # NULL for a hall that has never been inspected — it's due now.
+        f"  DATE((SELECT MAX(created_at) FROM inspections WHERE mess_id = m.id) + INTERVAL {INSPECTION_INTERVAL_DAYS} DAY) AS interval_due "
         "FROM mess_halls m JOIN colleges c ON m.college_id = c.id WHERE " + " AND ".join(where) +
         " ORDER BY c.name, m.name",
         params,

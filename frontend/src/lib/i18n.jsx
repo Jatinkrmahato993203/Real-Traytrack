@@ -1,0 +1,399 @@
+// English + Hindi for everything students and the public see. Staff screens
+// are English-only. To add a language: add a dictionary below with the same
+// keys; anything missing falls back to English.
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+
+const en = {
+  "nav.dashboard": "Dashboard",
+  "nav.report": "Report a problem",
+  "nav.rate": "Rate a meal",
+  "nav.myReports": "My reports",
+  "nav.trends": "History & trends",
+  "nav.staff": "Staff",
+  "nav.privacy": "Privacy",
+  "nav.menu": "Menu",
+  "nav.signOut": "Sign out",
+  "nav.skip": "Skip to content",
+  "lang.switch": "हिंदी",
+
+  "common.loading": "Loading…",
+  "common.retry": "Try again",
+  "common.college": "College",
+  "common.messHall": "Mess hall",
+  "common.selectHall": "Select a mess hall",
+  "common.optional": "optional",
+  "common.submit": "Submit",
+  "common.submitting": "Submitting…",
+  "common.cancel": "Cancel",
+  "common.close": "Close",
+  "common.all": "All",
+  "common.never": "Never",
+  "common.reference": "Reference",
+
+  "level.Low": "Low",
+  "level.Medium": "Medium",
+  "level.High": "High",
+  "alertStatus.open": "Open",
+  "alertStatus.acknowledged": "Acknowledged",
+  "alertStatus.in_progress": "Being fixed",
+  "alertStatus.fixed": "Fix awaiting check",
+  "alertStatus.resolved": "Resolved",
+
+  "authority.Mess Head": "Mess Head",
+  "authority.Principal": "Principal",
+  "authority.FSSAI": "FSSAI",
+
+  "meal.breakfast": "Breakfast",
+  "meal.lunch": "Lunch",
+  "meal.snacks": "Snacks",
+  "meal.dinner": "Dinner",
+
+  "dash.title": "Mess food safety",
+  "dash.subtitle": "Live status for every mess hall. No student or inspector identity is ever shown here.",
+  "dash.statusByHall": "Status by mess hall",
+  "dash.clear": "No open alerts",
+  "dash.openCount": "{n} open alert(s)",
+  "dash.with": "With: {who}",
+  "dash.notified": "notified by email",
+  "dash.notNotified": "not yet notified — contact missing",
+  "dash.lastInspection": "Last inspection",
+  "dash.score": "{score}% hygiene score",
+  "dash.rating": "{avg}★ from {n} rating(s) this week",
+  "dash.noRatings": "No ratings this week",
+  "dash.trends": "Complaints",
+  "dash.thisWeek": "Last 7 days",
+  "dash.last30": "Last 30 days",
+  "dash.byMeal": "By meal (30 days)",
+  "dash.noComplaints": "No complaints in this period.",
+  "dash.total": "{n} complaint(s)",
+  "dash.openAlerts": "Open alerts",
+  "dash.filterHall": "Filter by mess hall",
+  "dash.noAlerts": "No open alerts right now.",
+  "dash.reportCta": "Something wrong with your food?",
+  "dash.reportCtaBtn": "Report it",
+
+  "th.hall": "Mess hall",
+  "th.severity": "Severity",
+  "th.status": "Status",
+  "th.reason": "Reason",
+  "th.raised": "Raised",
+  "th.category": "Category",
+  "th.resolved": "Resolved",
+
+  "login.title": "Sign in with your college account",
+  "login.subtitle": "We use your college Google account so reports come from real students. Your identity is never shown publicly.",
+  "login.failed": "Sign-in failed. Please try again.",
+  "login.notCollege": "Your college ({domain}) isn't on TrayTrack yet. Ask your mess committee to add it.",
+
+  "consent.title": "Before you report",
+  "consent.p1": "We store your college email and name with your reports so we can stop fake or duplicate reports and let you follow up.",
+  "consent.p2": "Staff only ever see a masked email (or nothing, if you report anonymously). Nothing that identifies you is ever public.",
+  "consent.p3": "Your identity is removed automatically after {days} days. You can download or delete your data at any time from My reports.",
+  "consent.read": "Read the full privacy notice",
+  "consent.accept": "I understand — continue",
+
+  "report.title": "Report a problem",
+  "report.subtitle": "Takes under a minute. Your report is kept as evidence even if it doesn't raise an alert on its own.",
+  "report.signedIn": "Signed in as {email}",
+  "report.meal": "Which meal?",
+  "report.dish": "Which dish?",
+  "report.dishPlaceholder": "e.g. Rajma, dal, rice",
+  "report.category": "What went wrong?",
+  "report.fastLane": "Safety issue — just 3 reports within 48 hours raise a High alert.",
+  "report.describe": "Describe what happened",
+  "report.describeHint": "Please don't name individual staff — describe the problem.",
+  "report.photo": "Photo",
+  "report.photoHint": "JPEG, PNG or WEBP up to 4 MB. Location data is removed automatically.",
+  "report.photoTooBig": "Photo must be 4 MB or smaller.",
+  "report.anonymous": "Hide my identity from staff",
+  "report.anonymousHint": "Staff will see \"Anonymous student\". We still use your account to stop duplicate reports.",
+  "report.submit": "Submit report",
+  "report.recorded": "Thanks — your report is recorded.",
+  "report.progress": "{c} of {ct} students have reported this issue at this hall (last {d} days).",
+  "report.fastProgress": "{c} of {ct} reports needed within {h} hours to raise a safety alert.",
+  "report.alert": "Your report confirmed a pattern — a {level} alert has been raised and sent to the {who}.",
+  "report.track": "Track it in My reports",
+  "report.another": "Report something else",
+  "report.chooseHall": "Choose the mess hall first.",
+
+  "rate.title": "Rate a meal",
+  "rate.subtitle": "Quick feedback helps the mess know what's working, not just what's wrong.",
+  "rate.how": "How was it?",
+  "rate.star1": "Terrible",
+  "rate.star2": "Poor",
+  "rate.star3": "Okay",
+  "rate.star4": "Good",
+  "rate.star5": "Great",
+  "rate.comment": "Anything to add?",
+  "rate.submit": "Send rating",
+  "rate.thanks": "Thanks for rating!",
+  "rate.today": "Your ratings today",
+
+  "my.title": "My reports",
+  "my.subtitle": "Only you can see this page.",
+  "my.none": "You haven't reported anything yet.",
+  "my.status.received": "Received",
+  "my.status.acknowledged": "Seen by the mess team",
+  "my.status.action_taken": "Action taken",
+  "my.status.closed": "Closed",
+  "my.status.dismissed": "Dismissed",
+  "my.response": "Response from the mess team",
+  "my.waiting": "Waiting for the mess team to respond.",
+  "my.partOfAlert": "Part of a {level} alert",
+  "my.votes": "{v} of {n} reporting students say it's fixed.",
+  "my.voteFixed": "It's fixed",
+  "my.voted": "You said it's fixed.",
+  "my.voteWait": "You can confirm a fix in about {h} hour(s).",
+  "my.resolvedOn": "Resolved {when}",
+  "my.anon": "Reported anonymously",
+  "my.dataTitle": "Your data",
+  "my.dataText": "Download everything you've submitted, or delete your identity, text and photos from all of it.",
+  "my.download": "Download my data",
+  "my.delete": "Delete my data",
+  "my.deleteConfirm": "This removes your name, email, descriptions and photos from all your reports. Counts stay so history is accurate. This can't be undone. Continue?",
+  "my.deleted": "Your data has been deleted.",
+
+  "trends.title": "History & trends",
+  "trends.subtitle": "Public, aggregate view over time.",
+  "trends.6m": "Last 6 months",
+  "trends.12m": "Last 12 months",
+  "trends.all": "All time",
+  "trends.custom": "Custom range",
+  "trends.from": "From",
+  "trends.to": "To",
+  "trends.complaintsByMonth": "Complaints per month",
+  "trends.alertSummary": "Alerts by cause",
+  "trends.alertsInRange": "All alerts in range",
+  "trends.inspection": "Failed inspection",
+  "trends.none": "Nothing in this range.",
+
+  "privacy.title": "Privacy notice",
+
+  "error.generic": "Something went wrong.",
+  "error.notFound": "Page not found.",
+};
+
+const hi = {
+  "nav.dashboard": "डैशबोर्ड",
+  "nav.report": "शिकायत करें",
+  "nav.rate": "भोजन रेट करें",
+  "nav.myReports": "मेरी शिकायतें",
+  "nav.trends": "इतिहास और रुझान",
+  "nav.staff": "स्टाफ",
+  "nav.privacy": "गोपनीयता",
+  "nav.menu": "मेन्यू",
+  "nav.signOut": "साइन आउट",
+  "nav.skip": "मुख्य सामग्री पर जाएँ",
+  "lang.switch": "English",
+
+  "common.loading": "लोड हो रहा है…",
+  "common.retry": "फिर से कोशिश करें",
+  "common.college": "कॉलेज",
+  "common.messHall": "मेस हॉल",
+  "common.selectHall": "मेस हॉल चुनें",
+  "common.optional": "वैकल्पिक",
+  "common.submit": "जमा करें",
+  "common.submitting": "जमा हो रहा है…",
+  "common.cancel": "रद्द करें",
+  "common.close": "बंद करें",
+  "common.all": "सभी",
+  "common.never": "कभी नहीं",
+  "common.reference": "संदर्भ",
+
+  "level.Low": "कम",
+  "level.Medium": "मध्यम",
+  "level.High": "गंभीर",
+  "alertStatus.open": "खुला",
+  "alertStatus.acknowledged": "देख लिया गया",
+  "alertStatus.in_progress": "सुधार जारी",
+  "alertStatus.fixed": "सुधार की जाँच बाकी",
+  "alertStatus.resolved": "हल हो गया",
+
+  "authority.Mess Head": "मेस प्रमुख",
+  "authority.Principal": "प्रिंसिपल",
+  "authority.FSSAI": "FSSAI",
+
+  "meal.breakfast": "नाश्ता",
+  "meal.lunch": "दोपहर का भोजन",
+  "meal.snacks": "स्नैक्स",
+  "meal.dinner": "रात का भोजन",
+
+  "dash.title": "मेस खाद्य सुरक्षा",
+  "dash.subtitle": "हर मेस हॉल की ताज़ा स्थिति। यहाँ किसी छात्र या निरीक्षक की पहचान कभी नहीं दिखाई जाती।",
+  "dash.statusByHall": "मेस हॉल के अनुसार स्थिति",
+  "dash.clear": "कोई खुला अलर्ट नहीं",
+  "dash.openCount": "{n} खुले अलर्ट",
+  "dash.with": "ज़िम्मेदार: {who}",
+  "dash.notified": "ईमेल से सूचित",
+  "dash.notNotified": "अभी सूचित नहीं — संपर्क उपलब्ध नहीं",
+  "dash.lastInspection": "पिछला निरीक्षण",
+  "dash.score": "स्वच्छता स्कोर {score}%",
+  "dash.rating": "इस सप्ताह {n} रेटिंग से {avg}★",
+  "dash.noRatings": "इस सप्ताह कोई रेटिंग नहीं",
+  "dash.trends": "शिकायतें",
+  "dash.thisWeek": "पिछले 7 दिन",
+  "dash.last30": "पिछले 30 दिन",
+  "dash.byMeal": "भोजन के अनुसार (30 दिन)",
+  "dash.noComplaints": "इस अवधि में कोई शिकायत नहीं।",
+  "dash.total": "{n} शिकायतें",
+  "dash.openAlerts": "खुले अलर्ट",
+  "dash.filterHall": "मेस हॉल से छाँटें",
+  "dash.noAlerts": "अभी कोई खुला अलर्ट नहीं है।",
+  "dash.reportCta": "खाने में कुछ गड़बड़ है?",
+  "dash.reportCtaBtn": "शिकायत करें",
+
+  "th.hall": "मेस हॉल",
+  "th.severity": "गंभीरता",
+  "th.status": "स्थिति",
+  "th.reason": "कारण",
+  "th.raised": "कब",
+  "th.category": "श्रेणी",
+  "th.resolved": "हल हुआ",
+
+  "login.title": "अपने कॉलेज खाते से साइन इन करें",
+  "login.subtitle": "हम आपके कॉलेज Google खाते का उपयोग करते हैं ताकि शिकायतें असली छात्रों से आएँ। आपकी पहचान कभी सार्वजनिक नहीं होती।",
+  "login.failed": "साइन इन नहीं हो सका। कृपया फिर से कोशिश करें।",
+  "login.notCollege": "आपका कॉलेज ({domain}) अभी TrayTrack पर नहीं है। अपनी मेस समिति से इसे जोड़ने को कहें।",
+
+  "consent.title": "शिकायत करने से पहले",
+  "consent.p1": "हम आपकी शिकायतों के साथ आपका कॉलेज ईमेल और नाम रखते हैं ताकि नकली या दोहराई गई शिकायतें रोकी जा सकें और आप फॉलो-अप कर सकें।",
+  "consent.p2": "स्टाफ को केवल छिपा हुआ ईमेल दिखता है (गुमनाम शिकायत में कुछ भी नहीं)। आपकी पहचान बताने वाली कोई जानकारी सार्वजनिक नहीं होती।",
+  "consent.p3": "{days} दिनों के बाद आपकी पहचान अपने आप हटा दी जाती है। आप 'मेरी शिकायतें' से कभी भी अपना डेटा डाउनलोड या हटा सकते हैं।",
+  "consent.read": "पूरी गोपनीयता सूचना पढ़ें",
+  "consent.accept": "मैं समझ गया/गई — आगे बढ़ें",
+
+  "report.title": "शिकायत करें",
+  "report.subtitle": "एक मिनट से कम लगता है। आपकी शिकायत सबूत के रूप में रखी जाती है, भले ही अकेले उससे अलर्ट न बने।",
+  "report.signedIn": "{email} के रूप में साइन इन",
+  "report.meal": "कौन सा भोजन?",
+  "report.dish": "कौन सा व्यंजन?",
+  "report.dishPlaceholder": "जैसे राजमा, दाल, चावल",
+  "report.category": "क्या गड़बड़ हुई?",
+  "report.fastLane": "सुरक्षा समस्या — 48 घंटों में सिर्फ़ 3 शिकायतें गंभीर अलर्ट बना देती हैं।",
+  "report.describe": "क्या हुआ, बताइए",
+  "report.describeHint": "कृपया किसी स्टाफ का नाम न लिखें — समस्या बताइए।",
+  "report.photo": "फ़ोटो",
+  "report.photoHint": "JPEG, PNG या WEBP, अधिकतम 4 MB। लोकेशन जानकारी अपने आप हटा दी जाती है।",
+  "report.photoTooBig": "फ़ोटो 4 MB या उससे छोटी होनी चाहिए।",
+  "report.anonymous": "स्टाफ से मेरी पहचान छिपाएँ",
+  "report.anonymousHint": "स्टाफ को \"गुमनाम छात्र\" दिखेगा। दोहराई गई शिकायतें रोकने के लिए हम फिर भी आपके खाते का उपयोग करते हैं।",
+  "report.submit": "शिकायत जमा करें",
+  "report.recorded": "धन्यवाद — आपकी शिकायत दर्ज हो गई है।",
+  "report.progress": "इस हॉल में {ct} में से {c} छात्रों ने यह समस्या बताई है (पिछले {d} दिन)।",
+  "report.fastProgress": "सुरक्षा अलर्ट के लिए {h} घंटों में {ct} में से {c} शिकायतें।",
+  "report.alert": "आपकी शिकायत से एक पैटर्न की पुष्टि हुई — {level} अलर्ट बनाया गया और {who} को भेजा गया।",
+  "report.track": "'मेरी शिकायतें' में देखें",
+  "report.another": "कुछ और बताएँ",
+  "report.chooseHall": "पहले मेस हॉल चुनें।",
+
+  "rate.title": "भोजन रेट करें",
+  "rate.subtitle": "छोटी सी प्रतिक्रिया से मेस को पता चलता है कि क्या अच्छा चल रहा है, सिर्फ़ क्या गलत है यह नहीं।",
+  "rate.how": "कैसा था?",
+  "rate.star1": "बहुत बुरा",
+  "rate.star2": "खराब",
+  "rate.star3": "ठीक",
+  "rate.star4": "अच्छा",
+  "rate.star5": "बहुत अच्छा",
+  "rate.comment": "कुछ और कहना है?",
+  "rate.submit": "रेटिंग भेजें",
+  "rate.thanks": "रेटिंग के लिए धन्यवाद!",
+  "rate.today": "आज की आपकी रेटिंग",
+
+  "my.title": "मेरी शिकायतें",
+  "my.subtitle": "यह पेज केवल आप देख सकते हैं।",
+  "my.none": "आपने अभी तक कोई शिकायत नहीं की है।",
+  "my.status.received": "प्राप्त",
+  "my.status.acknowledged": "मेस टीम ने देखा",
+  "my.status.action_taken": "कार्रवाई की गई",
+  "my.status.closed": "बंद",
+  "my.status.dismissed": "खारिज",
+  "my.response": "मेस टीम का जवाब",
+  "my.waiting": "मेस टीम के जवाब का इंतज़ार है।",
+  "my.partOfAlert": "{level} अलर्ट का हिस्सा",
+  "my.votes": "शिकायत करने वाले {n} में से {v} छात्र कहते हैं कि यह ठीक हो गया।",
+  "my.voteFixed": "ठीक हो गया",
+  "my.voted": "आपने कहा कि यह ठीक हो गया।",
+  "my.voteWait": "आप लगभग {h} घंटे में सुधार की पुष्टि कर सकेंगे।",
+  "my.resolvedOn": "{when} हल हुआ",
+  "my.anon": "गुमनाम रूप से शिकायत की गई",
+  "my.dataTitle": "आपका डेटा",
+  "my.dataText": "आपने जो कुछ भी जमा किया है उसे डाउनलोड करें, या उसमें से अपनी पहचान, विवरण और फ़ोटो हटा दें।",
+  "my.download": "मेरा डेटा डाउनलोड करें",
+  "my.delete": "मेरा डेटा हटाएँ",
+  "my.deleteConfirm": "इससे आपकी सभी शिकायतों से आपका नाम, ईमेल, विवरण और फ़ोटो हट जाएँगे। गिनती बनी रहेगी ताकि इतिहास सही रहे। इसे वापस नहीं किया जा सकता। जारी रखें?",
+  "my.deleted": "आपका डेटा हटा दिया गया है।",
+
+  "trends.title": "इतिहास और रुझान",
+  "trends.subtitle": "समय के साथ सार्वजनिक, कुल जानकारी।",
+  "trends.6m": "पिछले 6 महीने",
+  "trends.12m": "पिछले 12 महीने",
+  "trends.all": "पूरा इतिहास",
+  "trends.custom": "अपनी तारीखें",
+  "trends.from": "से",
+  "trends.to": "तक",
+  "trends.complaintsByMonth": "हर महीने की शिकायतें",
+  "trends.alertSummary": "कारण के अनुसार अलर्ट",
+  "trends.alertsInRange": "इस अवधि के सभी अलर्ट",
+  "trends.inspection": "असफल निरीक्षण",
+  "trends.none": "इस अवधि में कुछ नहीं।",
+
+  "privacy.title": "गोपनीयता सूचना",
+
+  "error.generic": "कुछ गलत हो गया।",
+  "error.notFound": "पेज नहीं मिला।",
+};
+
+// Complaint category names come from the backend; translate the known ones.
+const categoriesHi = {
+  "Food poisoning / illness reported": "फ़ूड पॉइज़निंग / बीमारी",
+  "Insect in food": "खाने में कीड़ा",
+  "Foreign object (non-insect) in food": "खाने में कोई बाहरी चीज़",
+  "Undercooked food": "कच्चा खाना",
+  "Stale or spoiled food": "बासी या खराब खाना",
+  "Hygiene issue (utensils/serving area)": "साफ़-सफ़ाई की समस्या (बर्तन/परोसने की जगह)",
+  "Drinking water quality": "पीने के पानी की गुणवत्ता",
+  "Too oily": "बहुत ज़्यादा तेल",
+  "Overcooked / burnt": "ज़्यादा पका / जला हुआ",
+  "Too spicy": "बहुत तीखा",
+  "Quantity / portion size": "मात्रा / हिस्सा कम",
+  "Staff behaviour": "स्टाफ का व्यवहार",
+  "Other": "अन्य",
+};
+
+const DICTS = { en, hi };
+const LangContext = createContext({ lang: "en", setLang: () => {}, t: (k) => k, tCategory: (c) => c });
+
+function readLang() {
+  try {
+    return localStorage.getItem("tt_lang") || (navigator.language?.startsWith("hi") ? "hi" : "en");
+  } catch {
+    return "en";
+  }
+}
+
+export function I18nProvider({ children }) {
+  const [lang, setLangState] = useState(readLang);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
+
+  const value = useMemo(() => {
+    const dict = DICTS[lang] || en;
+    const t = (key, vars) => {
+      let s = dict[key] ?? en[key] ?? key;
+      if (vars) Object.entries(vars).forEach(([k, v]) => { s = s.replaceAll(`{${k}}`, v); });
+      return s;
+    };
+    const tCategory = (c) => (lang === "hi" ? categoriesHi[c] || c : c);
+    const setLang = (l) => {
+      try { localStorage.setItem("tt_lang", l); } catch { /* private mode */ }
+      setLangState(l);
+    };
+    return { lang, setLang, t, tCategory };
+  }, [lang]);
+
+  return <LangContext.Provider value={value}>{children}</LangContext.Provider>;
+}
+
+export const useI18n = () => useContext(LangContext);

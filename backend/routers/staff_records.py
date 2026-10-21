@@ -108,10 +108,12 @@ def inspection_overview(college_id: Optional[int] = None, staff=Depends(current_
     rows = db.overview(scoped_college(staff, college_id), scoped_mess(staff, None))
     schedule = db.list_schedule(scoped_college(staff, college_id), scoped_mess(staff, None))
     for r in rows:
-        due = r["scheduled_due"] or r["interval_due"]
-        r["next_due"] = due
-        r["overdue"] = bool(due and due < today)
         r["never_inspected"] = r["last_inspected_at"] is None
+        # Earliest of a scheduled date and the regular interval; a hall never
+        # inspected is due today.
+        candidates = [d for d in (r["scheduled_due"], r["interval_due"]) if d] or [today]
+        r["next_due"] = min(candidates)
+        r["overdue"] = r["next_due"] < today or r["never_inspected"]
         r["assigned_to_me"] = any(s["mess_id"] == r["mess_id"] and s["assigned_staff_id"] == staff["id"] for s in schedule)
     rows.sort(key=lambda r: (not r["overdue"], not r["assigned_to_me"], r["next_due"] or today))
     return {"halls": rows, "schedule": schedule}

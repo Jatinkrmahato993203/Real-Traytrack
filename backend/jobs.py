@@ -77,8 +77,10 @@ def weekly_digest():
         for c in complaints:
             by_category[c["category"]] = by_category.get(c["category"], 0) + 1
         open_alerts, _ = db.search_alerts(college_id=college["id"], resolved=False)
+        today = db.utcnow().date()
         overdue = [o for o in db.overview(college["id"])
-                   if (o["scheduled_due"] or o["interval_due"]) and (o["scheduled_due"] or o["interval_due"]) < db.utcnow().date()]
+                   if o["last_inspected_at"] is None
+                   or min(d for d in (o["scheduled_due"], o["interval_due"]) if d) < today]
         expiring = db.compliance.list_documents(college["id"], expiring_within_days=30)
         per_mess, _ = db.rating_summary(college["id"], (db.utcnow() - timedelta(days=7)).date())
         halls = {m["id"]: m["name"] for m in db.list_mess_halls(college["id"])}
