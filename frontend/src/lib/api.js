@@ -115,6 +115,11 @@ const s = (path, opts = {}) => request(`/staff${path}`, { ...opts, auth: "staff"
 
 export const staffLogin = (email, password) => request("/staff/login", { method: "POST", body: { email, password } });
 export const staffLogout = () => request("/staff/logout", { method: "POST" });
+export const verifyStaffCode = (code) => request("/staff/login/verify", { method: "POST", body: { code } });
+export const twoFactorSetup = () => s("/me/2fa/setup", { method: "POST" });
+export const twoFactorEnable = (code) => s("/me/2fa/enable", { method: "POST", body: { code } });
+export const twoFactorDisable = (password, code) => s("/me/2fa/disable", { method: "POST", body: { password, code } });
+export const newRecoveryCodes = (code) => s("/me/2fa/recovery-codes", { method: "POST", body: { code } });
 export const signOutEverywhere = () => s("/me/sign-out-everywhere", { method: "POST" });
 export const getCollegeSettings = (id) => s(`/colleges/${id}/settings`);
 export const updateCollegeSettings = (id, changes) => s(`/colleges/${id}/settings`, { method: "PATCH", body: changes });

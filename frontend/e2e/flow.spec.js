@@ -3,7 +3,8 @@
 // proof → the principal verifies → students see it resolved.
 import { expect, test } from "@playwright/test";
 import {
-  acceptPrivacyIfAsked, API, createStaff, HALL_A, PNG, signInStudent, staffApi, staffSignInUi, watchForProblems,
+  acceptPrivacyIfAsked, API, completeTwoFactorSetup, createStaff, HALL_A, PNG, signInStudent, staffApi, staffSignInUi,
+  watchForProblems,
 } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
@@ -78,10 +79,13 @@ test("mess head works the alert with proof; principal verifies it", async ({ bro
   expect(problems).toEqual([]);
   await headCtx.close();
 
-  // Principal
+  // Principal — must set up two-factor sign-in before doing anything.
   const prCtx = await browser.newContext();
   const pr = await prCtx.newPage();
   await staffSignInUi(pr, "principal@e2e.test");
+  const blocked = await prCtx.request.get(`${API}/staff/alerts`);
+  expect(blocked.status()).toBe(403);
+  await completeTwoFactorSetup(pr, "principal@e2e.test");
   await expect(pr.locator(".tab-btn", { hasText: "Alerts" }).locator(".badge")).toBeVisible();   // in-app "work waiting"
   await pr.goto(alertUrl.replace(/^https?:\/\/[^/]+/, ""));
   const step = pr.locator("section", { has: pr.getByRole("heading", { name: "Next step" }) });
@@ -90,6 +94,13 @@ test("mess head works the alert with proof; principal verifies it", async ({ bro
   await expect(pr.locator(".detail .pill").first()).toHaveText("Resolved");
   await expect(pr.locator(".timeline")).toContainText("Marked fixed");
   await prCtx.close();
+
+  // Next sign-in needs the authenticator code.
+  const again = await browser.newContext();
+  const page2 = await again.newPage();
+  await staffSignInUi(page2, "principal@e2e.test");
+  await expect(page2.locator(".staff-bar")).toContainText("Principal E2E");
+  await again.close();
 });
 
 test("students see their report resolved", async ({ browser }) => {
@@ -146,4 +157,31 @@ test("a forged cross-site write without the CSRF header is refused", async ({ br
   const forged = await context.request.post(`${API}/staff/mess-halls`, { data: { college_id: 1, name: "Forged" } });
   expect(forged.status()).toBe(403);
   await context.close();
+});
+
+test("Google Sign-In loads under the strict CSP, and only where needed", async ({ page }) => {
+  const problems = watchForProblems(page);
+  const googleScripts = [];
+  page.on("request", (r) => r.url().includes("accounts.google.com/gsi/client") && googleScripts.push(r.url()));
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Mess food safety" })).toBeVisible();
+  expect(googleScripts, "Google's script must not load on the dashboard").toEqual([]);
+
+  const res = await page.goto("/report");
+  const nonce = await page.locator('meta[name="csp-nonce"]').getAttribute("content");
+  expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+  expect(res.headers()["content-security-policy"]).toContain(`'nonce-${nonce}'`);
+  // Google renders its button in an iframe and injects one nonce'd <style>.
+  await expect(page.locator('iframe[src*="accounts.google.com/gsi"]')).toBeAttached({ timeout: 20_000 });
+  // Browsers hide nonce attribute values from the DOM (so injected scripts
+  // can't read them); the element's .nonce property still has it.
+  const styleNonce = await page.locator("style#googleidentityservice_button_styles").evaluate((el) => el.nonce);
+  expect(styleNonce).toBe(nonce);
+  expect(googleScripts.length).toBe(1);
+  expect(problems).toEqual([]);
+
+  // A different page load gets a different nonce.
+  await page.reload();
+  expect(await page.locator('meta[name="csp-nonce"]').getAttribute("content")).not.toBe(nonce);
 });

@@ -67,7 +67,7 @@ export default function StaffAccounts() {
             </label>
           )}
         </div>
-        <Field label="Initial password" hint="At least 8 characters."><input type="password" autoComplete="new-password" required minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+        <Field label="Initial password" hint="At least 10 characters; common passwords are refused."><input type="password" autoComplete="new-password" required minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
         <ErrorBanner error={error} />
         {ok && <div className="banner success">{ok}</div>}
         <button type="submit" className="primary-btn">Create account</button>
@@ -84,7 +84,7 @@ export default function StaffAccounts() {
               <strong>{p.name}{isMe && " (you)"} · {ROLE_LABEL[p.role] || p.role}{!p.active && " · Deactivated"}</strong>
               <span className="hint">{p.mess_name ? `${p.mess_name}, ` : ""}{p.college_name || "All colleges"}</span>
             </div>
-            <p className="hint">{p.email}</p>
+            <p className="hint">{p.email} · {p.two_factor_enabled ? "✓ two-factor on" : "two-factor off"}</p>
             <div className="button-row">
               {!isMe && <button type="button" className="link-btn" onClick={() => update(p, { active: !p.active }, p.active ? "Deactivated — their sessions stop immediately." : "Reactivated.")}>{p.active ? "Deactivate" : "Reactivate"}</button>}
               {!isMe && (
@@ -94,6 +94,9 @@ export default function StaffAccounts() {
               )}
               <input type="password" autoComplete="new-password" placeholder="New password" value={pw[p.id] || ""} onChange={(e) => setPw({ ...pw, [p.id]: e.target.value })} />
               <button type="button" className="link-btn" disabled={!pw[p.id]} onClick={async () => { await update(p, { password: pw[p.id] }, "Password changed."); setPw({ ...pw, [p.id]: "" }); }}>Set password</button>
+              {!isMe && p.two_factor_enabled && (
+                <button type="button" className="link-btn danger" onClick={() => confirm(`Reset ${p.name}'s two-factor sign-in? Use this if they lost their phone — they'll set it up again.`) && update(p, { reset_two_factor: true }, "Two-factor reset; they've been signed out.")}>Reset two-factor</button>
+              )}
             </div>
             {rowMsg[p.id] && <p className="hint">{rowMsg[p.id]}</p>}
           </article>

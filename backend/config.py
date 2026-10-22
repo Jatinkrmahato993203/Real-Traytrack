@@ -48,8 +48,13 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "auto")
 COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").lower()
 
 # Browser end-to-end tests only: lets a test sign in as any student
-# without Google. NEVER enable on a real deployment.
+# without Google. NEVER enable on a real deployment — it's refused unless
+# the database is a throwaway test one and the site runs on localhost.
 E2E_TEST_LOGIN = os.environ.get("E2E_TEST_LOGIN", "0") == "1"
+
+# Roles that must use two-factor sign-in (authenticator app). They can still
+# sign in without it, but can do nothing except set it up.
+REQUIRE_2FA_ROLES = {r.strip() for r in os.environ.get("REQUIRE_2FA_ROLES", "admin,principal").split(",") if r.strip()}
 BOOTSTRAP_ADMIN_EMAIL = os.environ.get("MESS_ADMIN_EMAIL", "admin@traytrack.local")
 BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("MESS_ADMIN_PASSWORD", "changeme123")
 
@@ -84,7 +89,13 @@ LOCAL_TZ = os.environ.get("LOCAL_TZ", "Asia/Kolkata")
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 
 
-if E2E_TEST_LOGIN and APP_BASE_URL.startswith("https://"):
-    raise RuntimeError("E2E_TEST_LOGIN must never be enabled on an HTTPS (real) deployment.")
+if E2E_TEST_LOGIN:
+    from urllib.parse import urlparse
+    _host = urlparse(APP_BASE_URL).hostname or ""
+    if not DB_NAME.startswith(("traytrack_e2e", "traytrack_test")) or _host not in ("localhost", "127.0.0.1"):
+        raise RuntimeError(
+            "E2E_TEST_LOGIN lets anyone sign in as any student. It only runs with a test database "
+            "(DB_NAME starting traytrack_e2e/traytrack_test) on localhost. Remove it from this deployment."
+        )
 
 COOKIE_SECURE_FLAG = APP_BASE_URL.startswith("https://") if COOKIE_SECURE == "auto" else COOKIE_SECURE == "1"

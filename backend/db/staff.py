@@ -5,7 +5,7 @@ from .core import transaction, fetch_all, fetch_one, now_iso
 STAFF_PUBLIC_COLUMNS = (
     "staff_users.id, staff_users.name, staff_users.email, staff_users.role, staff_users.college_id, "
     "staff_users.mess_id, staff_users.active, staff_users.created_at, colleges.name AS college_name, "
-    "mess_halls.name AS mess_name"
+    "mess_halls.name AS mess_name, staff_users.totp_enabled_at IS NOT NULL AS two_factor_enabled"
 )
 _FROM = (
     "FROM staff_users LEFT JOIN colleges ON staff_users.college_id = colleges.id "
@@ -80,3 +80,67 @@ def update_staff(staff_id, name=None, role=None, active=None, password_hash=None
     if sets:
         with transaction() as cur:
             cur.execute(f"UPDATE staff_users SET {', '.join(sets)} WHERE id = %s", params + [staff_id])
+
+
+# ---------- Two-factor (TOTP) ----------
+
+def get_two_factor(staff_id):
+    """Secret material — only for the 2FA code paths, never returned to clients."""
+    import json
+    row = fetch_one(
+        "SELECT totp_secret, totp_pending_secret, totp_enabled_at, totp_last_step, recovery_codes "
+        "FROM staff_users WHERE id = %s",
+        (staff_id,),
+    )
+    if row:
+        row["recovery_codes"] = json.loads(row["recovery_codes"]) if row["recovery_codes"] else []
+    return row
+
+
+def set_pending_two_factor(staff_id, secret):
+    with transaction() as cur:
+        cur.execute("UPDATE staff_users SET totp_pending_secret = %s WHERE id = %s", (secret, staff_id))
+
+
+def enable_two_factor(staff_id, secret, step, recovery_hashes):
+    import json
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE staff_users SET totp_secret = %s, totp_pending_secret = NULL, totp_enabled_at = %s, "
+            "totp_last_step = %s, recovery_codes = %s WHERE id = %s",
+            (secret, now_iso(), step, json.dumps(recovery_hashes), staff_id),
+        )
+
+
+def disable_two_factor(staff_id):
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE staff_users SET totp_secret = NULL, totp_pending_secret = NULL, totp_enabled_at = NULL, "
+            "totp_last_step = NULL, recovery_codes = NULL WHERE id = %s",
+            (staff_id,),
+        )
+
+
+def record_totp_step(staff_id, step):
+    """Remember the last accepted step; returns False if it was already used
+    (a concurrent replay of the same code)."""
+    with transaction() as cur:
+        cur.execute(
+            "UPDATE staff_users SET totp_last_step = %s WHERE id = %s AND (totp_last_step IS NULL OR totp_last_step < %s)",
+            (step, staff_id, step),
+        )
+        return cur.rowcount == 1
+
+
+def use_recovery_code(staff_id, code_hash):
+    """Consumes a recovery code; returns how many remain, or None if invalid."""
+    import json
+    with transaction() as cur:
+        cur.execute("SELECT recovery_codes FROM staff_users WHERE id = %s FOR UPDATE", (staff_id,))
+        row = cur.fetchone()
+        codes = json.loads(row["recovery_codes"]) if row and row["recovery_codes"] else []
+        if code_hash not in codes:
+            return None
+        codes.remove(code_hash)
+        cur.execute("UPDATE staff_users SET recovery_codes = %s WHERE id = %s", (json.dumps(codes), staff_id))
+        return len(codes)

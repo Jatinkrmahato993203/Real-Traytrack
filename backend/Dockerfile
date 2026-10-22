@@ -7,8 +7,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Exact, hash-verified versions (requirements.lock) — a tampered or
+# swapped package fails the build instead of shipping.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY . .
 RUN useradd --create-home app && mkdir -p /data/uploads /data/logs /data/backups && chown -R app /data

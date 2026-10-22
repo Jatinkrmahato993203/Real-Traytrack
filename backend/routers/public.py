@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 import config
 import db
@@ -20,13 +21,19 @@ LEVEL_RANK = {1: "Low", 2: "Medium", 3: "High"}
 
 @router.get("/health")
 def health():
+    """For uptime monitors: 200 when healthy, 503 when the database is down
+    or background jobs have stopped running (scheduler died)."""
+    import jobs
     ok = db.ping()
-    return {
-        "status": "ok" if ok else "degraded",
+    stale = jobs.stale_jobs() if ok else []
+    body = {
+        "status": "ok" if ok and not stale else "degraded",
         "database": ok,
         "schema_version": db.current_version() if ok else None,
         "email_configured": notify.smtp_configured(),
+        "stale_jobs": stale,
     }
+    return body if body["status"] == "ok" else JSONResponse(status_code=503, content=body)
 
 
 @router.get("/colleges")

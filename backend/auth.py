@@ -30,7 +30,7 @@ def mask_email(email: str) -> str:
 # scrypt (memory-hard, in the standard library) with a per-user random salt.
 # Stored as "scrypt$n$r$p$salt$hash" so parameters can be raised later.
 
-MIN_PASSWORD_LENGTH = 8
+# Password rules live in passwords.py.
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2 ** 14, 8, 1
 
 

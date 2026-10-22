@@ -30,8 +30,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install --require-hashes -r requirements-dev.lock
       - run: python -m pytest -q
+      - name: Audit dependencies for known vulnerabilities
+        run: pip install pip-audit && pip-audit -r requirements.lock --disable-pip
+      - name: Lock files match requirements
+        run: |
+          pip install pip-tools
+          pip-compile -q --generate-hashes --strip-extras --allow-unsafe -o /tmp/check.lock requirements.txt
+          diff <(grep '==' requirements.lock) <(grep '==' /tmp/check.lock) || (echo "requirements.lock is stale — regenerate it (see README)"; exit 1)
 
   frontend:
     runs-on: ubuntu-latest
@@ -46,7 +53,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run lint
+      - run: npm test
       - run: npm run build
 
   e2e:
@@ -72,7 +81,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r backend/requirements.txt
+      - run: pip install --require-hashes -r backend/requirements.lock
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -80,7 +89,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
         working-directory: frontend
       - run: npx playwright test
         working-directory: frontend

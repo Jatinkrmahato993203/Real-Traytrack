@@ -415,12 +415,23 @@ def m005_sessions_limits_tuning(cur):
     _add_column(cur, "staff_users", "last_seen_activity_id", "INT")
 
 
+def m006_two_factor(cur):
+    """Two-factor sign-in (authenticator app) for staff."""
+
+    _add_column(cur, "staff_users", "totp_secret", "VARCHAR(64)")
+    _add_column(cur, "staff_users", "totp_pending_secret", "VARCHAR(64)")   # during setup, before confirmed
+    _add_column(cur, "staff_users", "totp_enabled_at", "DATETIME")
+    _add_column(cur, "staff_users", "totp_last_step", "BIGINT")             # replay protection
+    _add_column(cur, "staff_users", "recovery_codes", "TEXT")               # JSON list of SHA-256 hashes
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "students_privacy_notifications", m002_students_privacy_notifications),
     (3, "inspections", m003_inspections),
     (4, "workflow_roles_compliance", m004_workflow_roles_compliance),
     (5, "sessions_limits_tuning", m005_sessions_limits_tuning),
+    (6, "two_factor", m006_two_factor),
 ]
 
 

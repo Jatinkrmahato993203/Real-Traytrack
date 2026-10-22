@@ -10,6 +10,9 @@ several workers (or several servers) a job still runs once per period.
   compliance          daily    — licences/certificates nearing expiry
   retention           daily    — anonymize student data past RETENTION_DAYS
   weekly_digest       weekly   — Monday 9:00 local summary to each principal
+  backup              nightly  — BACKUP_HOUR local (if BACKUPS_ENABLED=1), verified
+
+A job that raises, or a backup that fails, sends an ops alert (ops.py).
 """
 
 import logging
@@ -18,10 +21,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import os
+
 import alert_engine
+import backups
 import config
 import db
 import notify
+import ops
 
 logger = logging.getLogger("traytrack.jobs")
 TICK_SECONDS = 300
@@ -115,13 +122,52 @@ def retention():
             f"{limits} rate-limit rows, {trimmed} activity rows trimmed")
 
 
+BACKUPS_ENABLED = os.environ.get("BACKUPS_ENABLED", "0") == "1"
+BACKUP_HOUR = int(os.environ.get("BACKUP_HOUR", "2"))       # local time
+BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "30"))
+
+
+def _backup_due():
+    if not BACKUPS_ENABLED or _local_now().hour < BACKUP_HOUR:
+        return False
+    last = db.security.last_job_run("backup")
+    if last is None:
+        return True
+    last_local = last.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(config.LOCAL_TZ))
+    return last_local.date() != _local_now().date()
+
+
+def nightly_backup():
+    try:
+        sql_path, zip_path = backups.run_backup(keep=BACKUP_KEEP)
+    except Exception as e:
+        ops.alert("backup_failed", f"Nightly backup failed: {e}")
+        raise
+    return f"{sql_path.name} ({sql_path.stat().st_size // 1024} KB, verified)" + (", photos zipped" if zip_path else "")
+
+
 JOBS = [
     ("escalation", lambda: _due("escalation", timedelta(hours=1)), alert_engine.escalate_stale_alerts),
     ("high_reminders", lambda: _due("high_reminders", timedelta(hours=6)), alert_engine.remind_high_alerts),
     ("compliance", lambda: _due("compliance", timedelta(days=1)), compliance_reminders),
     ("retention", lambda: _due("retention", timedelta(days=1)), retention),
     ("weekly_digest", _weekly_digest_due, weekly_digest),
+    ("backup", _backup_due, nightly_backup),
 ]
+
+# /health reports "degraded" (503) if a job that should run often hasn't —
+# the sign the scheduler itself has died.
+STALE_AFTER = {"escalation": timedelta(hours=3), "high_reminders": timedelta(hours=13)}
+
+
+def stale_jobs():
+    if not config.JOBS_ENABLED:
+        return []
+    runs = {r["job_name"]: r["last_run_at"] for r in db.security.all_job_runs()}
+    now = db.utcnow()
+    started = _started_at or now
+    return [name for name, limit in STALE_AFTER.items()
+            if now - (runs.get(name) or started) > limit and now - started > limit]
 
 
 def run_due_jobs():
@@ -135,8 +181,9 @@ def run_due_jobs():
                 result = fn()
                 db.security.record_job_run(name, result)
                 logger.info("Job %s finished: %s", name, result)
-        except Exception:
+        except Exception as e:
             logger.exception("Job %s failed", name)
+            ops.alert(f"job_{name}_failed", f"Background job '{name}' failed: {e!r}")
 
 
 def _loop():
@@ -147,10 +194,12 @@ def _loop():
 
 
 _started = False
+_started_at = None
 
 
 def start():
-    global _started
+    global _started, _started_at
     if config.JOBS_ENABLED and not _started:
         _started = True
+        _started_at = db.utcnow()
         threading.Thread(target=_loop, name="traytrack-jobs", daemon=True).start()

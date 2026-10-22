@@ -3,8 +3,12 @@
 #   cp backend/.env.example backend/.env    # then set real secrets
 #   docker compose up -d --build
 #
-# Data lives in named volumes (db, uploads, logs). Back up with:
+# Data lives in named volumes (db, uploads, logs, backups). A verified backup
+# runs nightly (BACKUP_HOUR, local time) into the backups volume — copy it off the
+# machine. Manual backup / restore drill:
 #   docker compose exec backend python scripts/backup.py
+#   docker compose exec backend python scripts/restore.py --force
+# Point an uptime monitor at /api/health (503 = database down or jobs stalled).
 services:
   db:
     image: mysql:8.4
@@ -33,6 +37,7 @@ services:
       FRONTEND_ORIGIN: ${PUBLIC_URL:-http://localhost:8080}
       APP_BASE_URL: ${PUBLIC_URL:-http://localhost:8080}
       BACKUP_DIR: /data/backups
+      BACKUPS_ENABLED: ${BACKUPS_ENABLED:-1}
     volumes:
       - uploads:/data/uploads
       - logs:/data/logs

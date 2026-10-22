@@ -1,5 +1,4 @@
 import { Component, lazy, Suspense, useEffect, useState } from "react";
-import { GoogleOAuthProvider } from "@react-oauth/google";
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useI18n } from "./lib/i18n";
 import { useStaff, useStudent } from "./lib/session";
@@ -14,9 +13,6 @@ const Report = lazy(() => import("./pages/student/Report"));
 const Rate = lazy(() => import("./pages/student/Rate"));
 const MyReports = lazy(() => import("./pages/student/MyReports"));
 const StaffApp = lazy(() => import("./pages/staff/StaffApp"));
-
-const GOOGLE_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID || "964017053673-hg64g75ro6kbgl1345dats7ca0pgeq3s.apps.googleusercontent.com";
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -117,8 +113,7 @@ function Footer() {
 
 export default function App() {
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div className="page">
+    <div className="page">
         <Header />
         <main id="main" tabIndex={-1}>
           <ErrorBoundary>
@@ -138,7 +133,6 @@ export default function App() {
           </ErrorBoundary>
         </main>
         <Footer />
-      </div>
-    </GoogleOAuthProvider>
+    </div>
   );
 }

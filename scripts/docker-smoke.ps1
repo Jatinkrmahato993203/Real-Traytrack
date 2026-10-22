@@ -16,7 +16,14 @@ PUBLIC_URL=http://localhost:8080
 "@ | Set-Content -Encoding ascii .env.smoke
 
 if (-not (Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
-$compose = @("compose", "--env-file", ".env.smoke", "-p", "traytrack-smoke")
+# Smoke-only settings layered over docker-compose.yml.
+@"
+services:
+  backend:
+    environment:
+      METRICS_TOKEN: smoke-metrics-token
+"@ | Set-Content -Encoding ascii docker-compose.smoke.yml
+$compose = @("compose", "--env-file", ".env.smoke", "-f", "docker-compose.yml", "-f", "docker-compose.smoke.yml", "-p", "traytrack-smoke")
 
 function Check($name, [scriptblock]$test) {
   try { if (& $test) { Write-Host "PASS $name" -ForegroundColor Green; return } } catch { Write-Host "     $_" }
@@ -39,6 +46,11 @@ Check "API healthy through nginx (/api/health)" { $health.status -eq "ok" -and $
 $page = Invoke-WebRequest http://localhost:8080/ -UseBasicParsing
 Check "app served" { $page.StatusCode -eq 200 -and $page.Content -match "TrayTrack" }
 Check "CSP on the app" { $page.Headers["Content-Security-Policy"] -match "script-src 'self'" }
+# Strict styles: nginx stamps a fresh nonce into the page and the header.
+$nonce = ([regex]'name="csp-nonce" content="([0-9a-f]{32})"').Match($page.Content).Groups[1].Value
+Check "CSP nonce in page matches header" { $nonce -and $page.Headers["Content-Security-Policy"] -match "'nonce-$nonce'" -and $page.Headers["Content-Security-Policy"] -notmatch "style-src-elem[^;]*unsafe-inline" }
+$again = Invoke-WebRequest http://localhost:8080/ -UseBasicParsing
+Check "CSP nonce changes per request" { $again.Content -notmatch $nonce }
 Check "security headers on the app" { $page.Headers["X-Frame-Options"] -eq "DENY" -and $page.Headers["X-Content-Type-Options"] -eq "nosniff" }
 $deep = Invoke-WebRequest http://localhost:8080/admin/alerts -UseBasicParsing
 Check "client-side routes fall back to the app" { $deep.StatusCode -eq 200 -and $deep.Content -match 'id="root"' }
@@ -62,7 +74,24 @@ Check "cookie session works through nginx" { (Invoke-RestMethod http://localhost
 # 2 workers + this checker = 4).
 $countPy = "import os; print(sum(1 for p in os.listdir('/proc') if p.isdigit() and b'python' in open('/proc/'+p+'/cmdline','rb').read()))"
 Check "two backend workers running" { [int](docker @compose exec -T backend python -c $countPy) -ge 4 }
-Check "backup script works in the container" { (docker @compose exec -T backend python scripts/backup.py --keep 2) -match "Database:" }
+try { Invoke-WebRequest http://localhost:8080/api/metrics -UseBasicParsing | Out-Null; $metricsAnon = 200 }
+catch { $metricsAnon = [int]$_.Exception.Response.StatusCode }
+$m = Invoke-WebRequest http://localhost:8080/api/metrics -Headers @{ Authorization = "Bearer smoke-metrics-token" } -UseBasicParsing
+Check "metrics need the token, then report" { $metricsAnon -eq 401 -and $m.Content -match "traytrack_database_up 1" -and $m.Content -match "traytrack_http_requests_total" }
+
+# Restore drill: back up, lose a table, restore, and check nothing is missing.
+$count = "import db; print(db.fetch_one('SELECT (SELECT COUNT(*) FROM staff_users) + (SELECT COUNT(*) FROM activity_log) AS n')['n'])"
+$before = [int](docker @compose exec -T backend python -c $count)
+Check "backup script works in the container" { (docker @compose exec -T backend python scripts/backup.py --keep 2) -match "Database:.*verified" }
+docker @compose exec -T backend python -c "import db; db.execute('DROP TABLE activity_log')"
+$ErrorActionPreference = "Continue"   # the refusal goes to stderr, as it should
+$refusal = docker @compose exec -T backend python scripts/restore.py 2>&1 | Out-String
+$refusedCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+Check "restore refuses a database that has data" { $refusedCode -ne 0 -and $refusal -match "use --force" }
+$restored = docker @compose exec -T backend python scripts/restore.py --force
+Check "restore drill brings the data back" { $restored -match "Restored" -and [int](docker @compose exec -T backend python -c $count) -eq $before }
+Check "app healthy after restore" { (Invoke-RestMethod http://localhost:8080/api/health).status -eq "ok" }
 
 } catch {
   Write-Host "ERROR $_" -ForegroundColor Red; $failed++
@@ -71,7 +100,7 @@ Check "backup script works in the container" { (docker @compose exec -T backend 
   # docker writes normal progress to stderr; don't let that count as an error.
   $ErrorActionPreference = "Continue"
   if ($Keep) { Write-Host "Left running on http://localhost:8080 (docker compose -p traytrack-smoke down -v to remove)" }
-  else { docker @compose down -v 2>&1 | Out-Null; Remove-Item .env.smoke -ErrorAction SilentlyContinue }
+  else { docker @compose down -v 2>&1 | Out-Null; Remove-Item .env.smoke, docker-compose.smoke.yml -ErrorAction SilentlyContinue }
 }
 if ($failed) { Write-Host "$failed check(s) failed" -ForegroundColor Red; exit 1 }
 Write-Host "All Docker checks passed" -ForegroundColor Green

@@ -30,6 +30,8 @@ export default defineConfig({
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], channel: channel === "chromium" ? undefined : channel }, testIgnore: /mobile/ },
     { name: "mobile", use: { ...devices["Pixel 7"], channel: channel === "chromium" ? undefined : channel }, testMatch: /mobile/ },
+    // Safari's engine at iPhone size — the closest to an iPhone without one.
+    { name: "iphone", use: { ...devices["iPhone 14"] }, testMatch: /mobile/ },
   ],
   webServer: [
     {

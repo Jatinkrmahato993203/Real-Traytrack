@@ -2,6 +2,7 @@ import { useState } from "react";
 import { changeOwnPassword, signOutEverywhere } from "../../lib/api";
 import { useStaff } from "../../lib/session";
 import { ErrorBanner, Field } from "../../components/ui";
+import { TwoFactorPanel } from "./TwoFactor";
 
 const CAP_TEXT = {
   view: "See complaints, alerts, inspections, compliance and activity",
@@ -42,13 +43,17 @@ export default function Account() {
       }}>
         <h3>Change your password</h3>
         <Field label="Current password"><input type="password" autoComplete="current-password" required value={form.current} onChange={(e) => setForm({ ...form, current: e.target.value })} /></Field>
-        <Field label="New password" hint="At least 8 characters."><input type="password" autoComplete="new-password" required minLength={8} value={form.next} onChange={(e) => setForm({ ...form, next: e.target.value })} /></Field>
+        <Field label="New password" hint="At least 10 characters — a short phrase works well. Common passwords are refused."><input type="password" autoComplete="new-password" required minLength={8} value={form.next} onChange={(e) => setForm({ ...form, next: e.target.value })} /></Field>
         <Field label="Repeat new password"><input type="password" autoComplete="new-password" required value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></Field>
         <ErrorBanner error={error} />
         {done && <div className="banner success">Password changed.</div>}
         <button type="submit" className="primary-btn">Change password</button>
         <p className="hint">Changing your password signs you out on every other device.</p>
       </form>
+      <section className="form-card">
+        <h3>Two-factor sign-in</h3>
+        <TwoFactorPanel />
+      </section>
       <section className="form-card">
         <h3>Sessions</h3>
         <p className="hint">Lost a phone or used a shared computer? Sign out of TrayTrack everywhere, including here.</p>

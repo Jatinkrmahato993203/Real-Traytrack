@@ -11,6 +11,7 @@ alert_engine.py / fssai_rules.py / permissions.py.
 """
 
 import logging
+import os
 import sys
 import time
 import uuid
@@ -27,6 +28,8 @@ import config
 import db
 import deps
 import jobs
+import metrics
+import ops
 from broadcaster import broadcaster
 from routers import public, staff_cases, staff_records, staff_setup, student
 
@@ -144,6 +147,10 @@ async def request_context(request: Request, call_next):
         response = JSONResponse(status_code=500, content={
             "detail": f"Something went wrong on our side. Reference: {request_id}", "request_id": request_id})
     elapsed = time.perf_counter() - started
+    if not path.endswith("/stream"):
+        metrics.observe(request.method, response.status_code, elapsed)
+    if response.status_code >= 500 and path != "/health":
+        ops.record_server_error(path)
     if elapsed > 2 and not request.url.path.endswith("/stream"):
         logger.warning("Slow request [%s] %s %s took %.1fs", request_id, request.method, request.url.path, elapsed)
     response.headers["X-Request-ID"] = request_id
@@ -159,6 +166,23 @@ app.include_router(student.router)
 app.include_router(staff_setup.router)
 app.include_router(staff_cases.router)
 app.include_router(staff_records.router)
+
+
+METRICS_TOKEN = os.environ.get("METRICS_TOKEN", "")
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics(request: Request):
+    """Prometheus scrape target. Disabled (404) unless METRICS_TOKEN is set;
+    scrape with Authorization: Bearer <METRICS_TOKEN>."""
+    import hmac
+    from fastapi.responses import PlainTextResponse
+    supplied = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not METRICS_TOKEN:
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    if not hmac.compare_digest(supplied, METRICS_TOKEN):
+        return JSONResponse(status_code=401, content={"detail": "Bad metrics token"})
+    return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/admin/complaint-photos/{filename}", include_in_schema=False)

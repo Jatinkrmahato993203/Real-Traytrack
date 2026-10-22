@@ -30,6 +30,7 @@ os.environ["SMTP_APP_PASSWORD"] = ""
 os.environ["MESS_ADMIN_EMAIL"] = "admin@traytrack.test"
 os.environ["MESS_ADMIN_PASSWORD"] = "bootstrap-pass-123"
 os.environ["RATE_LIMIT_SCALE"] = "100"   # tests make many requests from one "IP"
+os.environ["REQUIRE_2FA_ROLES"] = ""      # test_5 switches it on
 
 import config  # noqa: E402  (reads the env above)
 import pymysql  # noqa: E402

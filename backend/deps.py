@@ -53,10 +53,25 @@ def staff_for_token(token) -> dict:
     return staff
 
 
+def _allowed_before_two_factor(path):
+    """What someone who must use 2FA but hasn't set it up may still reach:
+    their own account pages and sign-out. Exact matching — a prefix test on
+    "/staff/me" would also let through "/staff/mess-halls"."""
+    return path in ("/staff/me", "/staff/logout") or path.startswith("/staff/me/")
+
+
 def current_staff(request: Request) -> dict:
     """Re-reads the account on every request, so deactivating someone or
-    changing their role applies immediately."""
-    return staff_for_token(session_token(request, auth.STAFF_COOKIE))
+    changing their role applies immediately. Roles that require two-factor
+    sign-in can do nothing but set it up until they have."""
+    staff = staff_for_token(session_token(request, auth.STAFF_COOKIE))
+    if (staff["role"] in config.REQUIRE_2FA_ROLES and not staff.get("two_factor_enabled")
+            and not _allowed_before_two_factor(request.url.path)):
+        raise HTTPException(status_code=403, detail={
+            "code": "two_factor_setup_required",
+            "message": "Your role requires two-factor sign-in. Set it up in My account first.",
+        })
+    return staff
 
 
 # ---------- Rate limits ----------

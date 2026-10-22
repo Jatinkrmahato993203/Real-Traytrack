@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
+import { GoogleSignInProvider } from "../../lib/google";
 import { acceptPrivacy, getPrivacyInfo, loginWithGoogle } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
 import { useStudent } from "../../lib/session";
@@ -24,6 +25,7 @@ export default function StudentGate({ children, requireCollege = true }) {
           <h1>{t("login.title")}</h1>
           <p className="subtitle">{t("login.subtitle")}</p>
           <div className="google-btn-wrap">
+            <GoogleSignInProvider>
             <GoogleLogin
               onSuccess={async (cred) => {
                 setError(null);
@@ -35,6 +37,7 @@ export default function StudentGate({ children, requireCollege = true }) {
               }}
               onError={() => setError(t("login.failed"))}
             />
+            </GoogleSignInProvider>
           </div>
           <ErrorBanner error={error} />
         </div>

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { getMyWork, onNewActivity } from "../../lib/api";
 import { useStaff } from "../../lib/session";
+import { TwoFactorSetup } from "./TwoFactor";
 import { ErrorBanner, Field, Loading } from "../../components/ui";
 
 const Activity = lazy(() => import("./Activity"));
@@ -34,30 +35,45 @@ const TABS = [
 ];
 
 function StaffLogin() {
-  const { signIn, notice } = useStaff();
+  const { signIn, verifyCode, notice } = useStaff();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [needCode, setNeedCode] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  async function run(fn) {
+    setBusy(true);
+    setError(null);
+    try { await fn(); } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  if (needCode) {
+    return (
+      <div className="content">
+        <h1>Enter your code</h1>
+        <form className="form-card" onSubmit={(e) => { e.preventDefault(); run(() => verifyCode(code)); }}>
+          <p>Open your authenticator app and enter the 6-digit code for TrayTrack.</p>
+          <Field label="Code" hint="Lost your phone? Enter one of your recovery codes instead.">
+            <input autoFocus inputMode="text" autoComplete="one-time-code" required maxLength={12} value={code} onChange={(e) => setCode(e.target.value)} />
+          </Field>
+          <ErrorBanner error={error} />
+          <button className="primary-btn" type="submit" disabled={busy}>{busy ? "Checking…" : "Sign in"}</button>
+          <button className="link-btn" type="button" onClick={() => { setNeedCode(false); setCode(""); setError(null); }}>← Start again</button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="content">
       <h1>Staff sign-in</h1>
       <p className="subtitle">For mess heads, principals, inspectors and admins. Students: use “Report a problem”.</p>
-      <form
-        className="form-card"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            await signIn(email, password);
-          } catch (err) {
-            setError(err);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
+      <form className="form-card" onSubmit={(e) => {
+        e.preventDefault();
+        run(async () => { if ((await signIn(email, password)).twoFactorRequired) setNeedCode(true); });
+      }}>
         {notice && <div className="banner info">{notice}</div>}
         <Field label="Email">
           <input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -69,6 +85,19 @@ function StaffLogin() {
         <button className="primary-btn" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
         <p className="hint">Each person has their own account — ask your admin if you need one.</p>
       </form>
+    </div>
+  );
+}
+
+// Roles that require two-factor sign-in see only this until it's on.
+function ForcedTwoFactor() {
+  const { staff, refreshStaff, signOut } = useStaff();
+  return (
+    <div className="content">
+      <h1>Set up two-factor sign-in</h1>
+      <p className="subtitle">As {staff.role === "admin" ? "an admin" : "a principal"} you can change things that affect every student, so your account needs a second step at sign-in. This takes about a minute.</p>
+      <section className="form-card"><TwoFactorSetup onEnabled={refreshStaff} /></section>
+      <button type="button" className="link-btn" onClick={() => signOut()}>Sign out</button>
     </div>
   );
 }
@@ -104,9 +133,11 @@ function useMyWork(enabled) {
 
 export default function StaffApp() {
   const { staff, checking, can, signOut } = useStaff();
-  const work = useMyWork(!!staff);
+  const mustSetUp2fa = !!staff && staff.two_factor_required && !staff.two_factor_enabled;
+  const work = useMyWork(!!staff && !mustSetUp2fa);
   if (checking) return <div className="content"><Loading /></div>;
   if (!staff) return <StaffLogin />;
+  if (mustSetUp2fa) return <ForcedTwoFactor />;
 
   const tabs = TABS.filter(([, , visible]) => visible(can));
   const home = staff.role === "inspector" ? "inspections" : staff.role === "mess_head" ? "alerts" : tabs[0][0];

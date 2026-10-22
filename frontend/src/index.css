@@ -341,3 +341,10 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .activity-item { transition: none; }
   * { scroll-behavior: auto !important; }
 }
+
+/* Two-factor */
+.recovery-codes { columns: 2; list-style: none; padding: 0; font-size: 15px; }
+.recovery-codes li { margin: 4px 0; }
+.qr-box { margin: 10px 0; }
+.secret-key { font-size: 15px; letter-spacing: 1px; word-break: break-all; }
+.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }

@@ -15,28 +15,28 @@ test("phone: menu, dashboard and report form", async ({ page, context }) => {
   await expect(page.getByRole("button", { name: /Menu/ })).toBeVisible();
   await expect(page.getByRole("link", { name: "Report a problem" }).first()).toBeHidden();   // nav collapsed
   await noSidewaysScroll(page);
-  await page.screenshot({ path: "e2e-screenshots/mobile-dashboard.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-dashboard.png`, fullPage: true });
 
   await page.getByRole("button", { name: /Menu/ }).click();
   await expect(page.locator("#main-nav").getByRole("link", { name: "Report a problem" })).toBeVisible();
-  await page.screenshot({ path: "e2e-screenshots/mobile-menu.png" });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-menu.png` });
 
   await signInStudent(context, "phone@sample-college.edu", "Phone User");
   await page.goto(`/report?mess=${HALL_A}`);
   await acceptPrivacyIfAsked(page);
   await expect(page.getByRole("heading", { name: "Report a problem" })).toBeVisible();
   await noSidewaysScroll(page);
-  await page.screenshot({ path: "e2e-screenshots/mobile-report.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-report.png`, fullPage: true });
 
   // Hindi
   await page.getByRole("button", { name: "हिंदी" }).click();
   await expect(page.getByRole("heading", { name: "शिकायत करें" })).toBeVisible();
-  await page.screenshot({ path: "e2e-screenshots/mobile-report-hindi.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-report-hindi.png`, fullPage: true });
   await page.getByRole("button", { name: "English" }).click();
 
   await page.goto("/my-reports");
   await noSidewaysScroll(page);
-  await page.screenshot({ path: "e2e-screenshots/mobile-my-reports.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-my-reports.png`, fullPage: true });
 });
 
 test("phone: staff alerts list becomes cards", async ({ page }) => {
@@ -48,10 +48,10 @@ test("phone: staff alerts list becomes cards", async ({ page }) => {
   // On a phone each row is a card: its cells stack (display: block/flex), headers hidden.
   expect(await row.evaluate((el) => getComputedStyle(el).display)).toBe("block");
   await noSidewaysScroll(page);
-  await page.screenshot({ path: "e2e-screenshots/mobile-staff-alerts.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-staff-alerts.png`, fullPage: true });
 
   await page.goto("/admin/inspections");
   await expect(page.locator(".data-table tbody tr").first()).toBeVisible();
   await noSidewaysScroll(page);
-  await page.screenshot({ path: "e2e-screenshots/mobile-staff-inspections.png", fullPage: true });
+  await page.screenshot({ path: `e2e-screenshots/${test.info().project.name}-staff-inspections.png`, fullPage: true });
 });

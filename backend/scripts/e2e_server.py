@@ -33,7 +33,10 @@ os.environ.update({
     "SMTP_APP_PASSWORD": "",
     "MESS_ADMIN_EMAIL": "admin@e2e.test",
     "MESS_ADMIN_PASSWORD": "e2e-admin-pass",
-    "RATE_LIMIT_SCALE": "20",
+    "RATE_LIMIT_SCALE": os.environ.get("RATE_LIMIT_SCALE", "20"),
+    # Principals must use two-factor sign-in, so the browser tests exercise
+    # the forced setup and the code step (the bootstrap admin is exempt).
+    "REQUIRE_2FA_ROLES": "principal",
     "UPLOAD_DIR": tempfile.mkdtemp(prefix="traytrack-e2e-uploads-"),
     "LOG_DIR": tempfile.mkdtemp(prefix="traytrack-e2e-logs-"),
 })

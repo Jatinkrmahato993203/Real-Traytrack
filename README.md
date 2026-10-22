@@ -92,13 +92,30 @@ alert contacts, checklist) · staff accounts · notification delivery health ·
   (staff 8 h, students 7 days) and at an absolute maximum, and they can be
   revoked — sign out, "sign out everywhere", password change (other devices),
   deactivation and data erasure all end sessions immediately.
+- **Two-factor sign-in** (authenticator app, RFC 6238) for staff. Roles in
+  `REQUIRE_2FA_ROLES` (default admin, principal) must set it up before they can
+  do anything else. 10 single-use recovery codes; codes can't be replayed;
+  turning it on signs out other devices; an admin can reset a lost phone.
+- **Passwords**: at least 10 characters (`MIN_PASSWORD_LENGTH`), not a common
+  password, keyboard run, or the person's own name/email; optional
+  breached-password check (`PWNED_PASSWORD_CHECK=1`, k-anonymity — only 5
+  hash characters leave the server).
 - **CSRF**: cookie-authenticated writes must carry an `X-TrayTrack` header that
   other sites can't send.
 - **Rate limits** on sign-in, complaints and ratings (shared across server
   processes) and on anonymous reads; `429` with `Retry-After`.
 - **Content-Security-Policy** and other security headers on the app (nginx /
-  `vite preview`) and on every API response. The browser tests run under the
-  production CSP, so a policy mistake fails CI.
+  `vite preview`) and on every API response. No inline scripts or `<style>`
+  blocks: Google Sign-In's stylesheet gets a fresh per-request nonce (nginx
+  stamps `$request_id` into the page and the header), and Google's script loads
+  only on the student sign-in page. The browser tests run under the production
+  CSP, so a policy mistake fails CI.
+- **Supply chain**: Python dependencies are hash-pinned (`requirements.lock`,
+  installed with `--require-hashes`), npm uses `package-lock.json`; CI runs
+  `pip-audit` and `npm audit`, and Dependabot proposes updates weekly.
+- `E2E_TEST_LOGIN` (sign in as anyone, for browser tests) refuses to start
+  unless the database is a `traytrack_e2e*`/`traytrack_test*` one and the site
+  is on localhost.
 
 ### Pilot tuning
 The alert thresholds are starting guesses. Each college can tune them in
@@ -195,11 +212,20 @@ Runs at `http://localhost:5173`.
 ### 5. Tests
 ```bash
 cd backend
-pip install -r requirements-dev.txt
-python -m pytest                 # 60 API tests, incl. real SMTP to a local mail server
+pip install --require-hashes -r requirements-dev.lock
+python -m pytest                 # 74 API tests, incl. real SMTP, 2FA, ops alerts, backup→restore
 ```
 The suite creates and drops its own database (`traytrack_test`, override with
-`TEST_DB_NAME`) on the server in `backend/.env`.
+`TEST_DB_NAME`) on the server in `backend/.env`. The backup→restore test needs
+the `mysqldump`/`mysql` clients on PATH (or `MYSQLDUMP`/`MYSQL`); it's skipped
+otherwise.
+
+Frontend unit tests (Vitest) and lint:
+```bash
+cd frontend
+npm test
+npm run lint
+```
 
 Browser tests (Playwright) start a fresh backend + the production build and
 drive them in a real browser — report → alert → fix with proof → verify,
@@ -207,11 +233,37 @@ inspections, live feed, cookie/CSRF security, Hindi, and phone layouts
 (screenshots saved to `frontend/e2e-screenshots/`):
 ```bash
 cd frontend
-npx playwright test              # uses installed Microsoft Edge
+npx playwright install webkit    # once, for the iPhone (Safari engine) project
+npx playwright test              # desktop + Android on installed Microsoft Edge, iPhone 14 on WebKit
 PW_CHANNEL=chromium npx playwright test   # or Playwright's Chromium (npx playwright install chromium)
 ```
-CI (`.github/workflows/ci.yml`) runs backend tests, lint + build, and the
-browser tests on every push.
+QR scanning uses the browser's `BarcodeDetector` where it exists (Chrome on
+Android) and falls back to `jsqr` on iPhone/Safari and Firefox. It needs HTTPS
+(or localhost) for camera access.
+
+Load test — a lunch rush against a throwaway database (one API worker):
+```bash
+cd backend
+python scripts/load_test.py --students 400 --concurrency 40
+```
+On a laptop: 400 students sign in, accept the notice and complain in ~12 s
+with 20 dashboard readers polling — 0 errors, complaint p95 ≈ 0.6 s.
+
+Docker end-to-end check (builds the images, then checks headers, the CSP
+nonce, sessions through nginx, metrics, and a backup → lose a table → restore
+drill):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\docker-smoke.ps1
+```
+
+Updating Python dependencies: edit `requirements.txt` / `requirements-dev.txt`,
+then regenerate the locks (CI fails if they're stale):
+```bash
+docker run --rm -v "$PWD/backend:/w" -w /w python:3.12-slim sh -c "pip install -q pip-tools && pip-compile -q --generate-hashes -o requirements.lock requirements.txt && pip-compile -q --generate-hashes -o requirements-dev.lock requirements-dev.txt"
+```
+CI (`.github/workflows/ci.yml`) runs backend tests + `pip-audit` + a lock
+freshness check, frontend `npm audit` + lint + unit tests + build, and the
+browser tests (Chromium and WebKit) on every push.
 
 ### 6. Things that need people, not code
 `docs/review/` has what a reviewer needs:
@@ -255,8 +307,14 @@ Put HTTPS in front (Caddy, a cloud load balancer, or certbot).
       all contacts present and emails sending.
 - [ ] Google OAuth consent screen published; origin added for the real domain.
 - [ ] HTTPS.
-- [ ] Daily backups scheduled **and copied off the server**:
-      `python scripts/backup.py --keep 30` (see the script for restore steps).
+- [ ] Nightly backups on (`BACKUPS_ENABLED=1`, the Docker default) **and the
+      backups volume copied off the server**. Do one restore drill:
+      `python scripts/restore.py --force` into a scratch database.
+- [ ] Every admin and principal has two-factor sign-in on (enforced).
+- [ ] Uptime monitor (UptimeRobot, Better Stack, …) on `https://<site>/api/health`
+      — it returns 503 if the database is down or background jobs stall.
+- [ ] `OPS_ALERT_EMAIL` and/or `OPS_WEBHOOK_URL` set, so failed backups, failed
+      jobs and bursts of server errors reach a person.
 - [ ] Privacy notice reviewed by the institution.
 - [ ] Optional: `SENTRY_DSN` + `pip install sentry-sdk` for error tracking.
 
@@ -265,4 +323,16 @@ Put HTTPS in front (Caddy, a cloud load balancer, or certbot).
   lockouts coordinate through MySQL locks/tables.
 - Logs: console + `LOG_DIR/traytrack.log` (rotating). Every response carries an
   `X-Request-ID`; error messages shown to users quote it.
-- `GET /health` for uptime monitoring.
+- `GET /health` for uptime monitoring: 200 when healthy; 503 with
+  `stale_jobs` when the database is down or the escalation/reminder jobs
+  haven't run on time.
+- `GET /metrics` (Prometheus text) when `METRICS_TOKEN` is set; scrape with
+  `Authorization: Bearer <token>`. Request counts and latency, database up,
+  open alerts by level, undelivered notifications, job ages.
+- Ops alerts go to `OPS_ALERT_EMAIL` (needs SMTP) and/or `OPS_WEBHOOK_URL`
+  (Slack/Discord/Teams-style JSON `{"text": ...}`), at most one per kind per
+  hour, and are recorded under Admin → Notifications either way.
+- Backups: a verified dump (complete, essential tables present) plus a zip of
+  photos, nightly at `BACKUP_HOUR` (local time), keeping `BACKUP_KEEP`. A failed backup
+  raises an ops alert. `scripts/restore.py` refuses to overwrite data without
+  `--force`; migrations bring an older backup up to date on next start.

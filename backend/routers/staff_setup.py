@@ -8,12 +8,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from datetime import timedelta
+
 import auth
 import config
 import db
 import fssai_rules
 import insights
 import notify
+import passwords
+import totp
 from deps import current_staff, rate_limit, require, require_global_admin, require_mess_in_scope, scoped_college
 from permissions import ROLES, capabilities
 
@@ -22,7 +26,13 @@ router = APIRouter(prefix="/staff", tags=["staff"])
 
 def staff_view(staff):
     keys = ("id", "name", "email", "role", "college_id", "college_name", "mess_id", "mess_name", "active")
-    return {**{k: staff.get(k) for k in keys}, "capabilities": capabilities(staff)}
+    return {**{k: staff.get(k) for k in keys}, "capabilities": capabilities(staff),
+            "two_factor_enabled": bool(staff.get("two_factor_enabled")),
+            "two_factor_required": staff.get("role") in config.REQUIRE_2FA_ROLES}
+
+
+MFA_COOKIE = "tt_mfa"
+MFA_TTL = timedelta(minutes=5)   # time allowed between password and code
 
 
 # ---------- Sign-in ----------
@@ -50,11 +60,68 @@ def login(payload: LoginRequest, request: Request, response: Response):
         if left > 0:
             raise HTTPException(status_code=401, detail=f"Incorrect email or password. {left} attempt(s) left.")
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 6 hours.")
-    auth.reset_attempts(ip_key, account_key)
     staff = db.get_staff(account["id"])
+    if staff["two_factor_enabled"]:
+        # Password was right, but that's only half: hand out a short-lived
+        # challenge (HttpOnly cookie) that /login/verify exchanges for a
+        # session once the authenticator code checks out.
+        challenge = db.sessions.create("mfa", MFA_TTL, MFA_TTL, staff_id=staff["id"],
+                                       ip=request.client.host if request.client else None)
+        auth.set_session_cookie(response, MFA_COOKIE, challenge, MFA_TTL)
+        return {"two_factor_required": True}
+    auth.reset_attempts(ip_key, account_key)
+    return _complete_sign_in(staff, request, response)
+
+
+def _complete_sign_in(staff, request, response):
     token = auth.start_staff_session(staff["id"], request)
     auth.set_session_cookie(response, auth.STAFF_COOKIE, token, auth.STAFF_MAX)
     return {"staff": staff_view(staff)}
+
+
+class VerifyRequest(BaseModel):
+    code: str
+
+
+def _check_second_factor(staff_id, code):
+    """True for a valid, unused authenticator code or recovery code."""
+    secrets_ = db.get_two_factor(staff_id)
+    step = totp.verify(secrets_["totp_secret"], code, last_used_step=secrets_["totp_last_step"])
+    if step is not None:
+        return db.record_totp_step(staff_id, step)
+    if "-" in (code or "") or len((code or "").strip()) > totp.DIGITS:
+        remaining = db.use_recovery_code(staff_id, totp.hash_recovery_code(code))
+        if remaining is not None:
+            staff = db.get_staff(staff_id)
+            db.log_activity("staff_recovery_code_used",
+                            f"{staff['name']} signed in with a recovery code ({remaining} left)",
+                            college_id=staff["college_id"], details={"actor": staff["name"], "remaining": remaining})
+            return True
+    return False
+
+
+@router.post("/login/verify")
+def verify_second_factor(payload: VerifyRequest, request: Request, response: Response):
+    """Second step of sign-in: the 6-digit authenticator code (or a recovery code)."""
+    rate_limit(request, "staff_login_verify", 20, 60)
+    challenge = request.cookies.get(MFA_COOKIE)
+    session = db.sessions.get(challenge, "mfa", MFA_TTL, MFA_TTL)
+    if not session:
+        raise HTTPException(status_code=401, detail="Your sign-in timed out — enter your email and password again.")
+    staff = db.get_staff(session["staff_id"])
+    ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
+    account_key = f"acct:{staff['email']}"
+    locked = auth.check_lockout(ip_key, account_key)
+    if locked:
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+    if not staff["active"] or not _check_second_factor(staff["id"], payload.code):
+        left = auth.record_failed_attempt(ip_key, account_key)
+        raise HTTPException(status_code=401 if left else 429,
+                            detail=f"That code didn't work. {left} attempt(s) left." if left else "Too many failed attempts.")
+    db.sessions.revoke(challenge)
+    auth.clear_session_cookie(response, MFA_COOKIE)
+    auth.reset_attempts(ip_key, account_key)
+    return _complete_sign_in(staff, request, response)
 
 
 @router.post("/logout")
@@ -86,7 +153,7 @@ def change_own_password(payload: ChangePasswordRequest, staff=Depends(current_st
     account = db.get_staff_login(staff["email"])
     if not auth.verify_password(payload.current_password, account["password_hash"]):
         raise HTTPException(status_code=400, detail="Your current password is incorrect.")
-    _check_password(payload.new_password)
+    _check_password(payload.new_password, staff["email"], staff["name"])
     db.update_staff(staff["id"], password_hash=auth.hash_password(payload.new_password))
     # Anyone else signed in as this person (an old device, someone who saw
     # the password) is signed out; this session continues.
@@ -96,9 +163,67 @@ def change_own_password(payload: ChangePasswordRequest, staff=Depends(current_st
     return {"ok": True}
 
 
-def _check_password(password):
-    if len(password) < auth.MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=400, detail=f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters.")
+def _check_password(password, email="", name=""):
+    problem = passwords.problem_with(password, email, name)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+
+
+# ---------- Two-factor setup (for yourself) ----------
+
+@router.post("/me/2fa/setup")
+def two_factor_setup(staff=Depends(current_staff)):
+    """Starts setup: a new secret to scan into an authenticator app. Not
+    active until confirmed with a code from the app."""
+    secret = totp.new_secret()
+    db.set_pending_two_factor(staff["id"], secret)
+    return {"secret": secret, "otpauth_uri": totp.provisioning_uri(secret, staff["email"])}
+
+
+@router.post("/me/2fa/enable")
+def two_factor_enable(payload: VerifyRequest, staff=Depends(current_staff)):
+    pending = db.get_two_factor(staff["id"])["totp_pending_secret"]
+    if not pending:
+        raise HTTPException(status_code=400, detail="Start setup first.")
+    step = totp.verify(pending, payload.code)
+    if step is None:
+        raise HTTPException(status_code=400, detail="That code didn't match — check the time on your phone and try the newest code.")
+    codes = totp.new_recovery_codes()
+    db.enable_two_factor(staff["id"], pending, step, [totp.hash_recovery_code(c) for c in codes])
+    db.sessions.revoke_staff(staff["id"], keep_token=staff["session_token"])
+    db.log_activity("staff_2fa_enabled", f"{staff['name']} turned on two-factor sign-in",
+                    college_id=staff["college_id"], details={"actor": staff["name"]})
+    return {"ok": True, "recovery_codes": codes}
+
+
+class DisableTwoFactorRequest(BaseModel):
+    password: str
+    code: str
+
+
+@router.post("/me/2fa/disable")
+def two_factor_disable(payload: DisableTwoFactorRequest, staff=Depends(current_staff)):
+    if staff["role"] in config.REQUIRE_2FA_ROLES:
+        raise HTTPException(status_code=400, detail="Your role requires two-factor sign-in, so it can't be turned off.")
+    account = db.get_staff_login(staff["email"])
+    if not auth.verify_password(payload.password, account["password_hash"]) or not _check_second_factor(staff["id"], payload.code):
+        raise HTTPException(status_code=400, detail="Password or code is incorrect.")
+    db.disable_two_factor(staff["id"])
+    db.log_activity("staff_2fa_disabled", f"{staff['name']} turned off two-factor sign-in",
+                    college_id=staff["college_id"], details={"actor": staff["name"]})
+    return {"ok": True}
+
+
+@router.post("/me/2fa/recovery-codes")
+def new_recovery_codes(payload: VerifyRequest, staff=Depends(current_staff)):
+    """Replaces all recovery codes (e.g. after using some)."""
+    if not staff["two_factor_enabled"] or not _check_second_factor(staff["id"], payload.code):
+        raise HTTPException(status_code=400, detail="Enter a current code from your authenticator app.")
+    codes = totp.new_recovery_codes()
+    secrets_ = db.get_two_factor(staff["id"])
+    db.enable_two_factor(staff["id"], secrets_["totp_secret"], secrets_["totp_last_step"],
+                         [totp.hash_recovery_code(c) for c in codes])
+    return {"recovery_codes": codes}
 
 
 # ---------- Staff accounts ----------
@@ -139,7 +264,7 @@ def create_account(payload: CreateStaffRequest, staff=Depends(current_staff)):
     email = payload.email.strip().lower()
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Enter a valid email address.")
-    _check_password(payload.password)
+    _check_password(payload.password, email, payload.name)
     college_id = scoped_college(staff, payload.college_id) if (payload.college_id or staff["college_id"]) else None
     if college_id and not db.get_college(college_id):
         raise HTTPException(status_code=400, detail="College not found.")
@@ -166,6 +291,7 @@ class UpdateStaffRequest(BaseModel):
     password: Optional[str] = None
     mess_id: Optional[int] = None
     clear_mess: bool = False
+    reset_two_factor: bool = False   # lost phone: they set it up again at next sign-in
 
 
 @router.patch("/accounts/{staff_id}")
@@ -179,7 +305,7 @@ def update_account(staff_id: int, payload: UpdateStaffRequest, staff=Depends(cur
     if payload.role is not None and payload.role not in ROLES:
         raise HTTPException(status_code=400, detail="Unknown role.")
     if payload.password is not None:
-        _check_password(payload.password)
+        _check_password(payload.password, target["email"], target["name"])
     if target["id"] == staff["id"] and (payload.active is False or (payload.role and payload.role != "admin")):
         raise HTTPException(status_code=400, detail="You can't deactivate or demote your own account.")
     removes_global_admin = (target["role"] == "admin" and not target["college_id"] and target["active"]
@@ -194,11 +320,15 @@ def update_account(staff_id: int, payload: UpdateStaffRequest, staff=Depends(cur
     db.update_staff(staff_id, name=payload.name, role=payload.role, active=payload.active,
                     password_hash=auth.hash_password(payload.password) if payload.password else None,
                     mess_id=payload.mess_id, clear_mess=payload.clear_mess)
-    if payload.active is False or payload.password:
+    if payload.reset_two_factor:
+        db.disable_two_factor(staff_id)
+    if payload.active is False or payload.password or payload.reset_two_factor:
         db.sessions.revoke_staff(staff_id)  # deactivated or reset: signed out everywhere
     changes = [k for k in ("name", "role", "active", "mess_id") if getattr(payload, k) is not None]
     if payload.clear_mess:
         changes.append("mess_id")
+    if payload.reset_two_factor:
+        changes.append("two-factor reset")
     if payload.password:
         changes.append("password")
     db.log_activity("admin_staff_updated",
