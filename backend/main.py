@@ -133,7 +133,8 @@ async def request_context(request: Request, call_next):
         response = JSONResponse(status_code=403, content={"detail": "Missing X-TrayTrack header."})
         response.headers["X-Request-ID"] = request_id
         return response
-    if request.method == "GET" and not path.startswith("/staff") and not has_cookie and not has_bearer             and not _public_read_allowed(deps.client_ip(request)):
+    anonymous_read = request.method == "GET" and not path.startswith("/staff") and not has_cookie and not has_bearer
+    if anonymous_read and not _public_read_allowed(deps.client_ip(request)):
         return JSONResponse(status_code=429, content={"detail": "Too many requests — please slow down."},
                             headers={"Retry-After": "60", "X-Request-ID": request_id})
     try:

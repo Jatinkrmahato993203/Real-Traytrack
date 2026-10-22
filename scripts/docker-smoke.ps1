@@ -24,6 +24,7 @@ function Check($name, [scriptblock]$test) {
 }
 $failed = 0
 
+try {
 docker @compose up -d --build
 if ($LASTEXITCODE) { throw "docker compose up failed" }
 
@@ -44,22 +45,33 @@ Check "client-side routes fall back to the app" { $deep.StatusCode -eq 200 -and 
 $asset = ([regex]'/assets/[^"]+\.js').Match($page.Content).Value
 $js = Invoke-WebRequest "http://localhost:8080$asset" -UseBasicParsing
 Check "assets cached and still carry security headers" { $js.Headers["Cache-Control"] -match "immutable" -and $js.Headers["X-Content-Type-Options"] -eq "nosniff" }
-$colleges = Invoke-RestMethod http://localhost:8080/api/colleges
-Check "public API via same origin" { $colleges.Count -ge 1 }
+Check "public API via same origin" { (Invoke-RestMethod http://localhost:8080/api/colleges).Count -ge 1 }
 try {
   Invoke-WebRequest http://localhost:8080/api/staff/me -UseBasicParsing | Out-Null
   $staffStatus = 200
 } catch { $staffStatus = [int]$_.Exception.Response.StatusCode }
 Check "staff API needs sign-in" { $staffStatus -eq 401 }
-$login = Invoke-WebRequest http://localhost:8080/api/staff/login -Method Post -ContentType "application/json" `
-  -Body '{"email":"admin@traytrack.local","password":"changeme123"}' -UseBasicParsing -SessionVariable s
+$login = $null
+try {
+  $login = Invoke-WebRequest http://localhost:8080/api/staff/login -Method Post -ContentType "application/json" `
+    -Body '{"email":"admin@traytrack.local","password":"changeme123"}' -UseBasicParsing -SessionVariable s
+} catch { Write-Host "     login: $_" }
 Check "staff sign-in sets an HttpOnly session cookie" { $login.Headers["Set-Cookie"] -match "tt_staff=.*HttpOnly" }
-$me = Invoke-RestMethod http://localhost:8080/api/staff/me -WebSession $s
-Check "cookie session works through nginx" { $me.role -eq "admin" }
-Check "two backend workers running" { (docker @compose exec -T backend sh -c "ps aux | grep -c '[u]vicorn'") -ge 2 }
+Check "cookie session works through nginx" { (Invoke-RestMethod http://localhost:8080/api/staff/me -WebSession $s).role -eq "admin" }
+# The slim image has no `ps`; count python processes via /proc (master +
+# 2 workers + this checker = 4).
+$countPy = "import os; print(sum(1 for p in os.listdir('/proc') if p.isdigit() and b'python' in open('/proc/'+p+'/cmdline','rb').read()))"
+Check "two backend workers running" { [int](docker @compose exec -T backend python -c $countPy) -ge 4 }
 Check "backup script works in the container" { (docker @compose exec -T backend python scripts/backup.py --keep 2) -match "Database:" }
 
-if ($Keep) { Write-Host "Left running on http://localhost:8080 (docker compose -p traytrack-smoke down -v to remove)" }
-else { docker @compose down -v | Out-Null; Remove-Item .env.smoke }
+} catch {
+  Write-Host "ERROR $_" -ForegroundColor Red; $failed++
+  docker @compose logs --tail 30 backend
+} finally {
+  # docker writes normal progress to stderr; don't let that count as an error.
+  $ErrorActionPreference = "Continue"
+  if ($Keep) { Write-Host "Left running on http://localhost:8080 (docker compose -p traytrack-smoke down -v to remove)" }
+  else { docker @compose down -v 2>&1 | Out-Null; Remove-Item .env.smoke -ErrorAction SilentlyContinue }
+}
 if ($failed) { Write-Host "$failed check(s) failed" -ForegroundColor Red; exit 1 }
 Write-Host "All Docker checks passed" -ForegroundColor Green
